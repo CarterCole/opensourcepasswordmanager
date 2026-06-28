@@ -1,29 +1,20 @@
-[workspace]
-members = [
-    "crates/server",
-    "crates/cli",
-    "crates/secretd-core",
-    "crates/auth",
-    "crates/db",
-    "crates/api-vault",
-    "crates/api-aws",
-    "crates/api-gcp",
-    "crates/api-azure",
-    "crates/api-cloudflare",
-    "crates/api-bitwarden",
-    "crates/api-native",
-    "crates/sync",
-]
-resolver = "2"
-
-[workspace.package]
+[package]
+name = "opensourcepasswordmanager"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
 authors = ["Carter Cole"]
 repository = "https://github.com/cartercole/opensourcepasswordmanager"
 
-[workspace.dependencies]
+[[bin]]
+name = "secretd"
+path = "src/main.rs"
+
+[[bin]]
+name = "secretd-cli"
+path = "src/bin/cli.rs"
+
+[dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 
@@ -31,7 +22,6 @@ tokio = { version = "1", features = ["full"] }
 axum = { version = "0.7", features = ["macros", "multipart"] }
 tower = { version = "0.4" }
 tower-http = { version = "0.5", features = ["cors", "trace", "compression-gzip"] }
-hyper = { version = "1" }
 
 # Database
 sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "sqlite", "uuid", "chrono", "json", "migrate"] }
@@ -45,7 +35,6 @@ serde_json = "1"
 
 # Cryptography
 aes-gcm = "0.10"
-ring = "0.17"
 argon2 = "0.5"
 rand = "0.8"
 base64 = "0.22"
@@ -57,8 +46,6 @@ jsonwebtoken = "9"
 
 # WebAuthn / Passkeys
 webauthn-rs = { version = "0.5" }
-
-# Force vendored OpenSSL so no system headers needed
 openssl = { version = "0.10", features = ["vendored"] }
 
 # TOTP
@@ -67,10 +54,6 @@ totp-rs = { version = "5", features = ["qr"] }
 # UUID + time
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-
-# Config
-config = "0.14"
-toml = "0.8"
 
 # CLI
 clap = { version = "4", features = ["derive", "env"] }
@@ -86,11 +69,8 @@ anyhow = "1"
 # Async traits
 async-trait = "0.1"
 
-# Include static files in binary
+# Include static assets in binary
 include_dir = "0.7"
 
-# HTTP client (for sync engine)
+# HTTP client (sync engine)
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
-
-# URL parsing
-url = "2"
