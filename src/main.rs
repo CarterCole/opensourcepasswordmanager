@@ -4,6 +4,7 @@ mod core;
 mod auth;
 mod api;
 mod sync;
+mod ui;
 
 use anyhow::{Context, Result};
 use axum::Router;
@@ -82,6 +83,7 @@ async fn main() -> Result<()> {
         .nest("/azure", api::azure::azure_router(app_state.clone()))
         .nest("/client", api::cloudflare::cf_router(app_state.clone()))
         .nest("/bitwarden", api::bitwarden::bitwarden_router(app_state.clone()))
+        .nest("/ui", ui::serve_ui())
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive());
 

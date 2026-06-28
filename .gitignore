@@ -5,3 +5,7 @@ config.toml
 secretd.db
 secretd.db-shm
 secretd.db-wal
+
+# Frontend build artifacts (baked into binary via embed-ui feature)
+web/node_modules/
+web/dist/
