@@ -100,3 +100,75 @@ impl CryptoEngine {
             .map_err(|_| anyhow::anyhow!("failed to decrypt value"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::{engine::general_purpose::STANDARD as B64, Engine};
+
+    fn test_engine() -> CryptoEngine {
+        std::env::set_var("SECRETD_KEK_ID", "00000000-0000-0000-0000-000000000099");
+        std::env::set_var("SECRETD_KEK", B64.encode([42u8; 32]));
+        CryptoEngine::from_env().unwrap()
+    }
+
+    #[test]
+    fn roundtrip_short() {
+        let e = test_engine();
+        let ct = e.encrypt(b"hello world").unwrap();
+        let pt = e.decrypt(&ct.ciphertext, &ct.nonce, &ct.encrypted_dek).unwrap();
+        assert_eq!(pt, b"hello world");
+    }
+
+    #[test]
+    fn roundtrip_empty() {
+        let e = test_engine();
+        let ct = e.encrypt(b"").unwrap();
+        let pt = e.decrypt(&ct.ciphertext, &ct.nonce, &ct.encrypted_dek).unwrap();
+        assert_eq!(pt, b"");
+    }
+
+    #[test]
+    fn roundtrip_large() {
+        let e = test_engine();
+        let plaintext = vec![0xABu8; 1024 * 1024]; // 1 MB
+        let ct = e.encrypt(&plaintext).unwrap();
+        let pt = e.decrypt(&ct.ciphertext, &ct.nonce, &ct.encrypted_dek).unwrap();
+        assert_eq!(pt, plaintext);
+    }
+
+    #[test]
+    fn different_plaintext_gives_different_ciphertext() {
+        let e = test_engine();
+        let ct1 = e.encrypt(b"hello world").unwrap();
+        let ct2 = e.encrypt(b"hello world").unwrap();
+        // Each encryption uses a fresh nonce, so ciphertexts must differ
+        assert_ne!(ct1.ciphertext, ct2.ciphertext);
+        assert_ne!(ct1.nonce, ct2.nonce);
+    }
+
+    #[test]
+    fn tampered_ciphertext_fails_decrypt() {
+        let e = test_engine();
+        let ct = e.encrypt(b"hello world").unwrap();
+        let mut tampered = ct.ciphertext.clone();
+        tampered[0] ^= 0xFF; // flip bits in the first byte
+        let result = e.decrypt(&tampered, &ct.nonce, &ct.encrypted_dek);
+        assert!(result.is_err(), "tampered ciphertext should fail to decrypt");
+    }
+
+    #[test]
+    fn wrong_kek_fails_decrypt() {
+        let e = test_engine();
+        let ct = e.encrypt(b"secret").unwrap();
+
+        // Build a second engine with a different KEK
+        std::env::set_var("SECRETD_KEK", B64.encode([99u8; 32]));
+        let e2 = CryptoEngine::from_env().unwrap();
+        // Restore correct KEK
+        std::env::set_var("SECRETD_KEK", B64.encode([42u8; 32]));
+
+        let result = e2.decrypt(&ct.ciphertext, &ct.nonce, &ct.encrypted_dek);
+        assert!(result.is_err(), "wrong KEK should fail to decrypt");
+    }
+}

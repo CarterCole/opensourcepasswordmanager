@@ -42,3 +42,48 @@ impl ApiKeyService {
             .is_ok()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_key_starts_with_sk_live() {
+        let (raw, _prefix, _hash) = ApiKeyService::generate().unwrap();
+        assert!(raw.starts_with("sk_live_"), "key should start with sk_live_: {raw}");
+    }
+
+    #[test]
+    fn prefix_is_first_12_chars() {
+        let (raw, prefix, _hash) = ApiKeyService::generate().unwrap();
+        assert_eq!(&raw[..12], prefix, "prefix should be first 12 chars of raw key");
+    }
+
+    #[test]
+    fn verify_correct_key_returns_true() {
+        let (raw, _prefix, hash) = ApiKeyService::generate().unwrap();
+        assert!(ApiKeyService::verify(&raw, &hash), "verify should return true for correct key");
+    }
+
+    #[test]
+    fn verify_wrong_key_returns_false() {
+        let (_raw, _prefix, hash) = ApiKeyService::generate().unwrap();
+        assert!(
+            !ApiKeyService::verify("sk_live_totally_wrong_key", &hash),
+            "verify should return false for wrong key"
+        );
+    }
+
+    #[test]
+    fn two_generated_keys_differ() {
+        let (raw1, _p1, _h1) = ApiKeyService::generate().unwrap();
+        let (raw2, _p2, _h2) = ApiKeyService::generate().unwrap();
+        assert_ne!(raw1, raw2, "two generated keys should differ");
+    }
+
+    #[test]
+    fn verify_malformed_hash_returns_false() {
+        let (raw, _prefix, _hash) = ApiKeyService::generate().unwrap();
+        assert!(!ApiKeyService::verify(&raw, "not-a-valid-hash"));
+    }
+}

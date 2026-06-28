@@ -100,3 +100,120 @@ pub fn generate_password(opts: &PasswordOptions) -> Result<String, &'static str>
 
     Ok(String::from_utf8(password).unwrap())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_opts(length: usize) -> PasswordOptions {
+        PasswordOptions {
+            length,
+            ..PasswordOptions::default()
+        }
+    }
+
+    #[test]
+    fn respects_length() {
+        // Minimum viable length is 4 when all 4 character types are required (default)
+        for len in [4, 8, 16, 32, 64, 128] {
+            let pw = generate_password(&default_opts(len)).unwrap();
+            assert_eq!(pw.len(), len, "expected length {len}");
+        }
+    }
+
+    #[test]
+    fn exclude_uppercase() {
+        let opts = PasswordOptions {
+            length: 64,
+            exclude_uppercase: true,
+            ..PasswordOptions::default()
+        };
+        let pw = generate_password(&opts).unwrap();
+        assert!(!pw.chars().any(|c| c.is_uppercase()), "no uppercase expected");
+    }
+
+    #[test]
+    fn exclude_numbers() {
+        let opts = PasswordOptions {
+            length: 64,
+            exclude_numbers: true,
+            ..PasswordOptions::default()
+        };
+        let pw = generate_password(&opts).unwrap();
+        assert!(!pw.chars().any(|c| c.is_ascii_digit()), "no digits expected");
+    }
+
+    #[test]
+    fn exclude_punctuation() {
+        let opts = PasswordOptions {
+            length: 64,
+            exclude_punctuation: true,
+            ..PasswordOptions::default()
+        };
+        let pw = generate_password(&opts).unwrap();
+        let punct: &[u8] = b"!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
+        for c in pw.chars() {
+            assert!(!punct.contains(&(c as u8)), "no punctuation expected, got {c}");
+        }
+    }
+
+    #[test]
+    fn include_space() {
+        // Generate many times to statistically confirm space is included
+        let opts = PasswordOptions {
+            length: 64,
+            exclude_uppercase: true,
+            exclude_lowercase: true,
+            exclude_numbers: true,
+            exclude_punctuation: true,
+            include_space: true,
+            require_each_included_type: true,
+            ..PasswordOptions::default()
+        };
+        let pw = generate_password(&opts).unwrap();
+        assert!(pw.chars().all(|c| c == ' '), "only spaces expected");
+    }
+
+    #[test]
+    fn require_each_type_is_satisfied() {
+        let opts = PasswordOptions {
+            length: 32,
+            require_each_included_type: true,
+            ..PasswordOptions::default()
+        };
+        let pw = generate_password(&opts).unwrap();
+        assert!(pw.chars().any(|c| c.is_uppercase()), "should have uppercase");
+        assert!(pw.chars().any(|c| c.is_lowercase()), "should have lowercase");
+        assert!(pw.chars().any(|c| c.is_ascii_digit()), "should have digit");
+        let punct: &[u8] = b"!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
+        assert!(pw.chars().any(|c| punct.contains(&(c as u8))), "should have punctuation");
+    }
+
+    #[test]
+    fn two_calls_differ() {
+        let opts = default_opts(32);
+        let pw1 = generate_password(&opts).unwrap();
+        let pw2 = generate_password(&opts).unwrap();
+        // Statistically they should almost never match
+        assert_ne!(pw1, pw2, "two consecutive passwords should differ");
+    }
+
+    #[test]
+    fn zero_length_is_error() {
+        let opts = PasswordOptions { length: 0, ..PasswordOptions::default() };
+        assert!(generate_password(&opts).is_err());
+    }
+
+    #[test]
+    fn exclude_characters_respected() {
+        let opts = PasswordOptions {
+            length: 64,
+            exclude_characters: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".into(),
+            exclude_punctuation: true,
+            require_each_included_type: false,
+            ..PasswordOptions::default()
+        };
+        let pw = generate_password(&opts).unwrap();
+        assert!(!pw.chars().any(|c| c.is_uppercase() || c.is_ascii_digit()));
+    }
+}
