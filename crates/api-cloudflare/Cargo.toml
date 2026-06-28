@@ -1,0 +1,20 @@
+[package]
+name = "api-cloudflare"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+db = { path = "../db" }
+secretd-core = { path = "../secretd-core" }
+auth = { path = "../auth" }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+axum.workspace = true

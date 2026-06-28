@@ -1,0 +1,38 @@
+[package]
+name = "server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "secretd"
+path = "src/main.rs"
+
+[dependencies]
+db = { path = "../db" }
+secretd-core = { path = "../secretd-core" }
+auth = { path = "../auth" }
+api-vault = { path = "../api-vault" }
+api-aws = { path = "../api-aws" }
+api-gcp = { path = "../api-gcp" }
+api-azure = { path = "../api-azure" }
+api-cloudflare = { path = "../api-cloudflare" }
+api-bitwarden = { path = "../api-bitwarden" }
+api-native = { path = "../api-native" }
+sync = { path = "../sync" }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+config.workspace = true
+toml.workspace = true
+include_dir.workspace = true
+sqlx.workspace = true

@@ -1,0 +1,28 @@
+# secretd configuration
+# Copy to config.toml and adjust. All values can also be set via environment variables.
+
+[server]
+listen = "0.0.0.0:8200"
+# Root token for dev mode only — disable in production
+dev_root_token = "dev-root-token"
+jwt_secret = "change-me-in-production"
+
+[storage]
+# postgres | sqlite | redis
+backend = "postgres"
+
+[storage.postgres]
+url = "postgres://secretd:secretd@localhost/secretd"
+
+[storage.sqlite]
+path = "./secretd.db"
+
+[storage.redis]
+url = "redis://localhost:6379"
+key_prefix = "secretd:"
+
+[crypto]
+# Run `secretd generate-kek` to generate these values
+kek_id = "00000000-0000-0000-0000-000000000001"
+# 32-byte key, base64-encoded
+kek = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
