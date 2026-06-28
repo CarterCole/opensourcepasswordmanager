@@ -60,6 +60,7 @@ async fn main() -> Result<()> {
     let (default_org_id, default_env_id) =
         bootstrap_dev_data(&pool, &cfg).await.context("bootstrap failed")?;
 
+
     let vault_state = api::vault::auth::VaultState {
         store: store.clone(),
         db: db_backend.clone(),
@@ -76,6 +77,23 @@ async fn main() -> Result<()> {
         default_env_id,
     };
 
+    // Build the auth manager — register providers based on config.
+    // API key auth is always active (enforced in the native router middleware).
+    let mut auth_mgr = auth::AuthManager::new();
+    if cfg.auth.email {
+        tracing::info!("email+password login enabled");
+        auth_mgr.register(auth::email::EmailPasswordProvider);
+    }
+    // Cloud tier / plugins can call auth_mgr.register_boxed(...) here before serve().
+
+    let cfg = Arc::new(cfg);
+    let native_state = api::native::router::NativeState {
+        pool: pool.clone(),
+        sessions: Arc::new(auth::SessionService::from_secret(&cfg.jwt_secret)),
+        auth_manager: Arc::new(auth_mgr),
+        config: cfg.clone(),
+    };
+
     let app = Router::new()
         .nest("/v1", api::vault::vault_router(vault_state))
         .nest("/", api::aws::aws_router(app_state.clone()))
@@ -83,6 +101,7 @@ async fn main() -> Result<()> {
         .nest("/azure", api::azure::azure_router(app_state.clone()))
         .nest("/client", api::cloudflare::cf_router(app_state.clone()))
         .nest("/bitwarden", api::bitwarden::bitwarden_router(app_state.clone()))
+        .merge(api::native::native_router(native_state))
         .nest("/ui", ui::serve_ui())
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive());
