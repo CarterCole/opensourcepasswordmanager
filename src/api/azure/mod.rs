@@ -1,1 +1,3 @@
-// Azure Key Vault wire-compat — Phase 3
+pub mod handlers;
+pub mod router;
+pub use router::azure_router;

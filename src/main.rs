@@ -67,8 +67,21 @@ async fn main() -> Result<()> {
         default_env_id,
     };
 
+    let app_state = api::common::AppState {
+        store: store.clone(),
+        db: db_backend.clone(),
+        dev_root_token: Some(cfg.dev_root_token.clone()),
+        default_org_id,
+        default_env_id,
+    };
+
     let app = Router::new()
         .nest("/v1", api::vault::vault_router(vault_state))
+        .nest("/", api::aws::aws_router(app_state.clone()))
+        .nest("/gcp", api::gcp::gcp_router(app_state.clone()))
+        .nest("/azure", api::azure::azure_router(app_state.clone()))
+        .nest("/client", api::cloudflare::cf_router(app_state.clone()))
+        .nest("/bitwarden", api::bitwarden::bitwarden_router(app_state.clone()))
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive());
 

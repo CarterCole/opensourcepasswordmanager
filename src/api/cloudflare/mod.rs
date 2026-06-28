@@ -1,1 +1,3 @@
-// Cloudflare Secrets Store wire-compat — Phase 3
+pub mod handlers;
+pub mod router;
+pub use router::cf_router;

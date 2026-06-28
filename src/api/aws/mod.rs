@@ -1,1 +1,3 @@
-// AWS Secrets Manager wire-compat — Phase 3
+pub mod handlers;
+pub mod router;
+pub use router::aws_router;
