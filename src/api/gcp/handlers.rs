@@ -9,23 +9,13 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::api::common::AppState;
+use crate::api::common::{require_auth, AppState};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 fn gcp_error(code: u16, message: &str, status: &str) -> Response {
     let http_status = StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    (
-        http_status,
-        Json(json!({
-            "error": {
-                "code": code,
-                "message": message,
-                "status": status,
-            }
-        })),
-    )
-        .into_response()
+    (http_status, Json(json!({ "error": { "code": code, "message": message, "status": status } }))).into_response()
 }
 
 fn not_found(name: &str) -> Response {
@@ -51,31 +41,24 @@ pub async fn list_secrets(
     Path(project): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    require_bearer(&headers);
+    if let Err(_) = require_auth(&state, &headers).await {
+        return gcp_error(403, "Not authorized", "PERMISSION_DENIED");
+    }
 
     match state.store.list(state.default_env_id, "/").await {
         Ok(secrets) => {
-            let list: Vec<Value> = secrets
-                .iter()
-                .map(|s| {
-                    json!({
-                        "name": secret_resource(&project, &s.name),
-                        "replication": {"automatic": {}},
-                        "createTime": s.created_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-                    })
-                })
-                .collect();
-            (
-                StatusCode::OK,
-                Json(json!({ "secrets": list, "nextPageToken": "" })),
-            )
-                .into_response()
+            let list: Vec<Value> = secrets.iter().map(|s| json!({
+                "name": secret_resource(&project, &s.name),
+                "replication": {"automatic": {}},
+                "createTime": s.created_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            })).collect();
+            (StatusCode::OK, Json(json!({ "secrets": list, "nextPageToken": "" }))).into_response()
         }
         Err(e) => gcp_error(500, &e.to_string(), "INTERNAL"),
     }
 }
 
-// ── create secret (container, no value) ──────────────────────────────────────
+// ── create secret (container, no value yet) ───────────────────────────────────
 
 #[derive(Deserialize)]
 pub struct CreateSecretQuery {
@@ -90,34 +73,28 @@ pub async fn create_secret(
     Query(q): Query<CreateSecretQuery>,
     Json(_body): Json<Value>,
 ) -> Response {
-    require_bearer(&headers);
+    if let Err(_) = require_auth(&state, &headers).await {
+        return gcp_error(403, "Not authorized", "PERMISSION_DENIED");
+    }
 
     let name = match q.secret_id {
         Some(s) => s,
         None => return gcp_error(400, "secretId query parameter required", "INVALID_ARGUMENT"),
     };
 
-    // Create with empty value as placeholder
-    match state
-        .store
-        .put(state.default_env_id, "/", &name, b"", "string", None)
-        .await
-    {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(json!({
-                "name": secret_resource(&project, &name),
-                "replication": {"automatic": {}},
-                "createTime": rfc3339_now(),
-            })),
-        )
-            .into_response(),
+    // Store a sentinel placeholder — the real value arrives via addVersion.
+    // value_type="gcp-placeholder" guards against serving this version via :access.
+    match state.store.put(state.default_env_id, "/", &name, b"", "gcp-placeholder", None).await {
+        Ok(_) => (StatusCode::OK, Json(json!({
+            "name": secret_resource(&project, &name),
+            "replication": {"automatic": {}},
+            "createTime": rfc3339_now(),
+        }))).into_response(),
         Err(e) => gcp_error(500, &e.to_string(), "INTERNAL"),
     }
 }
 
 // ── POST /v1/projects/:project/secrets/*action ────────────────────────────────
-// Handles both:  /secrets/NAME:addVersion  and  /secrets/NAME  (plain POST)
 
 pub async fn post_action(
     State(state): State<AppState>,
@@ -125,7 +102,9 @@ pub async fn post_action(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    require_bearer(&headers);
+    if let Err(_) = require_auth(&state, &headers).await {
+        return gcp_error(403, "Not authorized", "PERMISSION_DENIED");
+    }
 
     if action.ends_with(":addVersion") {
         let secret = action.trim_end_matches(":addVersion").to_string();
@@ -137,96 +116,67 @@ pub async fn post_action(
 
 async fn add_version(state: AppState, project: String, secret: String, body: Value) -> Response {
     let data_b64 = body
-        .get("payload")
-        .and_then(|p| p.get("data"))
-        .and_then(|d| d.as_str())
-        .unwrap_or("");
+        .get("payload").and_then(|p| p.get("data")).and_then(|d| d.as_str()).unwrap_or("");
 
     let plaintext = match B64.decode(data_b64) {
         Ok(bytes) => bytes,
         Err(_) => return gcp_error(400, "Invalid base64 in payload.data", "INVALID_ARGUMENT"),
     };
 
-    match state
-        .store
-        .put(state.default_env_id, "/", &secret, &plaintext, "bytes", None)
-        .await
-    {
-        Ok(sv) => (
-            StatusCode::OK,
-            Json(json!({
-                "name": version_resource(&project, &secret, sv.version.version_num),
-                "state": "ENABLED",
-                "createTime": rfc3339_now(),
-            })),
-        )
-            .into_response(),
+    match state.store.put(state.default_env_id, "/", &secret, &plaintext, "bytes", None).await {
+        Ok(sv) => (StatusCode::OK, Json(json!({
+            "name": version_resource(&project, &secret, sv.version.version_num),
+            "state": "ENABLED",
+            "createTime": rfc3339_now(),
+        }))).into_response(),
         Err(e) => gcp_error(500, &e.to_string(), "INTERNAL"),
     }
 }
 
 // ── GET /v1/projects/:project/secrets/*action ─────────────────────────────────
-// Handles:
-//   /secrets/NAME                          — metadata
-//   /secrets/NAME/versions/latest:access   — access latest version
-//   /secrets/NAME/versions/N:access        — access specific version
 
 pub async fn get_action(
     State(state): State<AppState>,
     Path((project, action)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    require_bearer(&headers);
+    if let Err(_) = require_auth(&state, &headers).await {
+        return gcp_error(403, "Not authorized", "PERMISSION_DENIED");
+    }
 
-    // Try to parse versions access pattern
-    // action patterns:
-    //   "NAME"
-    //   "NAME/versions/latest:access"
-    //   "NAME/versions/N:access"
     if let Some((secret, version_part)) = action.split_once("/versions/") {
         let version_str = version_part.trim_end_matches(":access");
-        let version: Option<i32> = if version_str == "latest" {
-            None
-        } else {
-            version_str.parse().ok()
-        };
+        let version: Option<i32> = if version_str == "latest" { None } else { version_str.parse().ok() };
 
-        return match state
-            .store
-            .get(state.default_env_id, "/", secret, version)
-            .await
-        {
+        return match state.store.get(state.default_env_id, "/", secret, version).await {
             Ok(sv) => {
+                // Guard: placeholder versions (created by create_secret) are not accessible
+                if sv.version.value_type == "gcp-placeholder" {
+                    return gcp_error(
+                        404,
+                        &format!("Secret [{secret}] version [{}] is not accessible.", sv.version.version_num),
+                        "NOT_FOUND",
+                    );
+                }
                 let encoded = B64.encode(&sv.plaintext);
                 let ver_num = sv.version.version_num;
-                (
-                    StatusCode::OK,
-                    Json(json!({
-                        "name": version_resource(&project, secret, ver_num),
-                        "payload": {
-                            "data": encoded,
-                            "dataCrc32c": "0",
-                        },
-                    })),
-                )
-                    .into_response()
+                (StatusCode::OK, Json(json!({
+                    "name": version_resource(&project, secret, ver_num),
+                    "payload": { "data": encoded, "dataCrc32c": "0" },
+                }))).into_response()
             }
             Err(_) => not_found(secret),
         };
     }
 
-    // Plain metadata request: action = "NAME"
+    // Metadata request
     let secret = &action;
     match state.store.get(state.default_env_id, "/", secret, None).await {
-        Ok(sv) => (
-            StatusCode::OK,
-            Json(json!({
-                "name": secret_resource(&project, secret),
-                "replication": {"automatic": {}},
-                "createTime": sv.secret.created_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-            })),
-        )
-            .into_response(),
+        Ok(sv) => (StatusCode::OK, Json(json!({
+            "name": secret_resource(&project, secret),
+            "replication": {"automatic": {}},
+            "createTime": sv.secret.created_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        }))).into_response(),
         Err(_) => not_found(secret),
     }
 }
@@ -238,7 +188,9 @@ pub async fn delete_action(
     Path((_project, action)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    require_bearer(&headers);
+    if let Err(_) = require_auth(&state, &headers).await {
+        return gcp_error(403, "Not authorized", "PERMISSION_DENIED");
+    }
 
     let secret = &action;
     match state.store.get(state.default_env_id, "/", secret, None).await {
@@ -248,10 +200,4 @@ pub async fn delete_action(
         }
         Err(_) => not_found(secret),
     }
-}
-
-// ── auth helper ───────────────────────────────────────────────────────────────
-
-fn require_bearer(_headers: &HeaderMap) {
-    // Dev mode: accept any Authorization header; silently pass if missing
 }

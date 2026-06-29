@@ -249,6 +249,14 @@ impl SecretBackend for MemBackend {
         Ok(())
     }
 
+    async fn update_secret_tags(&self, secret_id: Uuid, tags: serde_json::Value) -> DbResult<()> {
+        let mut store = self.inner.lock().unwrap();
+        let key = store.by_id.get(&secret_id).cloned().ok_or(DbError::NotFound)?;
+        let (secret, _) = store.secrets.get_mut(&key).ok_or(DbError::NotFound)?;
+        secret.tags = tags;
+        Ok(())
+    }
+
     async fn set_label(&self, _secret_id: Uuid, _label: &str, _version_num: i32) -> DbResult<()> {
         Ok(())
     }
@@ -321,12 +329,15 @@ pub fn make_app_state() -> opensourcepasswordmanager::api::common::AppState {
     let backend: Arc<dyn SecretBackend> = Arc::new(MemBackend::new());
     let crypto = Arc::new(CryptoEngine::from_env().unwrap());
     let store = Arc::new(SecretStore::new(backend.clone(), crypto));
+    let sessions = Arc::new(opensourcepasswordmanager::auth::SessionService::from_secret("test-jwt-secret"));
     opensourcepasswordmanager::api::common::AppState {
         store,
         db: backend,
         dev_root_token: Some("test-token".into()),
         default_org_id: Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap(),
         default_env_id: Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap(),
+        pg_pool: None,
+        sessions,
     }
 }
 
@@ -335,12 +346,15 @@ pub fn make_vault_state() -> opensourcepasswordmanager::api::vault::auth::VaultS
     let backend: Arc<dyn SecretBackend> = Arc::new(MemBackend::new());
     let crypto = Arc::new(CryptoEngine::from_env().unwrap());
     let store = Arc::new(SecretStore::new(backend.clone(), crypto));
+    let sessions = Arc::new(opensourcepasswordmanager::auth::SessionService::from_secret("test-jwt-secret"));
     opensourcepasswordmanager::api::vault::auth::VaultState {
         store,
         db: backend,
         dev_root_token: Some("test-token".into()),
         default_org_id: Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap(),
         default_env_id: Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap(),
+        pg_pool: None,
+        sessions,
     }
 }
 

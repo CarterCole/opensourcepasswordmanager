@@ -63,7 +63,7 @@ async fn collections_list_shape() {
     let req = axum::http::Request::builder()
         .method("GET")
         .uri("/api/public/collections")
-        .header("Authorization", "Bearer test-access-token")
+        .header("Authorization", "Bearer test-token")
         .body(axum::body::Body::empty())
         .unwrap();
 
@@ -81,7 +81,7 @@ async fn events_list_shape() {
     let req = axum::http::Request::builder()
         .method("GET")
         .uri("/api/public/events")
-        .header("Authorization", "Bearer test-access-token")
+        .header("Authorization", "Bearer test-token")
         .body(axum::body::Body::empty())
         .unwrap();
 
@@ -100,7 +100,7 @@ async fn create_collection_returns_collection_object() {
         .method("POST")
         .uri("/api/public/collections")
         .header("Content-Type", "application/json")
-        .header("Authorization", "Bearer test-access-token")
+        .header("Authorization", "Bearer test-token")
         .body(axum::body::Body::from(
             serde_json::to_vec(&json!({ "name": "MyCollection", "groups": [] })).unwrap(),
         ))
@@ -120,7 +120,7 @@ async fn policies_list_shape() {
     let req = axum::http::Request::builder()
         .method("GET")
         .uri("/api/public/policies")
-        .header("Authorization", "Bearer test-access-token")
+        .header("Authorization", "Bearer test-token")
         .body(axum::body::Body::empty())
         .unwrap();
 
@@ -137,7 +137,7 @@ async fn members_list_shape() {
     let req = axum::http::Request::builder()
         .method("GET")
         .uri("/api/public/members")
-        .header("Authorization", "Bearer test-access-token")
+        .header("Authorization", "Bearer test-token")
         .body(axum::body::Body::empty())
         .unwrap();
 

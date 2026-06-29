@@ -78,4 +78,9 @@ pub trait SecretBackend: Send + Sync {
         environment_id: Option<Uuid>,
         engine_type: &str,
     ) -> Result<VaultMount>;
+
+    // ── Tags ─────────────────────────────────────────────────────────────────
+
+    /// Merge/replace the tags JSON on a secret without creating a new version.
+    async fn update_secret_tags(&self, secret_id: Uuid, tags: serde_json::Value) -> Result<()>;
 }

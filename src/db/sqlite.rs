@@ -464,6 +464,17 @@ impl SecretBackend for SqliteBackend {
         })).collect()
     }
 
+    async fn update_secret_tags(&self, secret_id: Uuid, tags: serde_json::Value) -> Result<()> {
+        sqlx::query(
+            "UPDATE secrets SET tags = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+        )
+        .bind(serde_json::to_string(&tags).unwrap_or_else(|_| "{}".into()))
+        .bind(now())
+        .bind(secret_id.to_string())
+        .execute(&self.pool).await.map_err(DbError::Sqlx)?;
+        Ok(())
+    }
+
     async fn upsert_vault_mount(&self, org_id: Uuid, mount_path: &str, env_id: Option<Uuid>, engine_type: &str) -> Result<VaultMount> {
         let id = Uuid::new_v4();
         sqlx::query(

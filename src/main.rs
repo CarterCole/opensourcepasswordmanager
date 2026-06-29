@@ -70,12 +70,20 @@ async fn main() -> Result<()> {
 
     let store = Arc::new(core::SecretStore::new(backend.clone(), crypto.clone()));
 
+    let pg_pool: Option<sqlx::PgPool> = match &pools {
+        Pools::Postgres(p) => Some(p.clone()),
+        Pools::Sqlite(_) => None,
+    };
+    let sessions = Arc::new(auth::SessionService::from_secret(&cfg.jwt_secret));
+
     let vault_state = api::vault::auth::VaultState {
         store: store.clone(),
         db: backend.clone(),
         dev_root_token: Some(cfg.dev_root_token.clone()),
         default_org_id,
         default_env_id,
+        pg_pool: pg_pool.clone(),
+        sessions: sessions.clone(),
     };
     let app_state = api::common::AppState {
         store: store.clone(),
@@ -83,6 +91,8 @@ async fn main() -> Result<()> {
         dev_root_token: Some(cfg.dev_root_token.clone()),
         default_org_id,
         default_env_id,
+        pg_pool: pg_pool.clone(),
+        sessions: sessions.clone(),
     };
 
     let mut app = Router::new()
@@ -105,7 +115,7 @@ async fn main() -> Result<()> {
         let cfg = Arc::new(cfg);
         let native_state = api::native::router::NativeState {
             pool: pool.clone(),
-            sessions: Arc::new(auth::SessionService::from_secret(&cfg.jwt_secret)),
+            sessions: sessions.clone(),
             auth_manager: Arc::new(auth_mgr),
             config: cfg,
         };

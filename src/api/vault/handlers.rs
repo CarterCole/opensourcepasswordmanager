@@ -90,22 +90,39 @@ pub async fn list_mounts(
 pub async fn token_create(
     State(state): State<VaultState>,
     Extension(claims): Extension<VaultClaims>,
-    Json(_req): Json<TokenCreateRequest>,
+    Json(req): Json<TokenCreateRequest>,
 ) -> Response {
-    // In Phase 1 (dev mode), just return a copy of the root token
+    let ttl_seconds: i64 = req
+        .ttl
+        .as_deref()
+        .and_then(|s| s.trim_end_matches('s').parse::<i64>().ok())
+        .unwrap_or(3600);
+
+    let policies = if req.policies.is_empty() {
+        vec!["default".to_string()]
+    } else {
+        req.policies.clone()
+    };
+
+    let user_id = claims.user_id.unwrap_or_else(Uuid::new_v4);
+    let child_token = state
+        .sessions
+        .issue(user_id, claims.org_id, "", policies.clone(), true, ttl_seconds)
+        .unwrap_or_else(|_| claims.token.clone());
+
     Json(AuthResponse {
         request_id: Uuid::new_v4().to_string(),
         auth: AuthData {
-            client_token: claims.token.clone(),
+            client_token: child_token,
             accessor: Uuid::new_v4().to_string(),
-            policies: vec!["root".into()],
-            token_policies: vec!["root".into()],
+            policies: policies.clone(),
+            token_policies: policies,
             metadata: HashMap::new(),
-            lease_duration: 0,
+            lease_duration: ttl_seconds as u64,
             renewable: false,
             entity_id: String::new(),
             token_type: "service".into(),
-            orphan: true,
+            orphan: false,
             num_uses: 0,
         },
     })

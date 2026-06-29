@@ -462,4 +462,13 @@ impl SecretBackend for PostgresBackend {
         .fetch_one(&self.pool).await?;
         Ok(Self::row_to_mount(&row))
     }
+
+    async fn update_secret_tags(&self, secret_id: Uuid, tags: serde_json::Value) -> Result<()> {
+        sqlx::query(
+            "UPDATE secrets SET tags = $2, updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(secret_id).bind(&tags)
+        .execute(&self.pool).await.map_err(DbError::Sqlx)?;
+        Ok(())
+    }
 }
