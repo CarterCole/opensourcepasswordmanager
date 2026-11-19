@@ -56,5 +56,9 @@ pub struct ProviderInfo {
 pub trait AuthProvider: Send + Sync {
     fn id(&self) -> &str;
     fn info(&self) -> ProviderInfo;
-    async fn authenticate(&self, creds: &Credentials, pool: &sqlx::PgPool) -> anyhow::Result<AuthUser>;
+    async fn authenticate(
+        &self,
+        creds: &Credentials,
+        pool: &sqlx::PgPool,
+    ) -> anyhow::Result<AuthUser>;
 }

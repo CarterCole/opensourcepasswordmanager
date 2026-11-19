@@ -28,7 +28,10 @@ fn cf_req(
 fn assert_cf_envelope(body: &serde_json::Value) {
     assert_eq!(body["success"], true, "success should be true: {body}");
     assert!(body["errors"].is_array(), "errors should be array: {body}");
-    assert!(body["messages"].is_array(), "messages should be array: {body}");
+    assert!(
+        body["messages"].is_array(),
+        "messages should be array: {body}"
+    );
 }
 
 // ── envelope shape ────────────────────────────────────────────────────────────
@@ -65,11 +68,18 @@ async fn create_store_and_list() {
     assert_eq!(result["name"], "mystore");
 
     // List stores
-    let list = cf_req("GET", "/v4/accounts/acct123/secrets_store/stores", json!(null));
+    let list = cf_req(
+        "GET",
+        "/v4/accounts/acct123/secrets_store/stores",
+        json!(null),
+    );
     let (ls, lbody) = common::call(app, list).await;
     assert_eq!(ls, StatusCode::OK);
     assert_cf_envelope(&lbody);
-    assert!(lbody["result"].is_array(), "result should be array of stores");
+    assert!(
+        lbody["result"].is_array(),
+        "result should be array of stores"
+    );
 }
 
 // ── batch create secrets ──────────────────────────────────────────────────────
@@ -126,15 +136,25 @@ async fn get_secret_metadata_no_value() {
     assert!(result["name"].is_string());
     assert!(result["status"].is_string());
     // Value should NOT be exposed
-    assert!(result.get("text").is_none(), "text should not be in metadata response");
-    assert!(result.get("value").is_none(), "value should not be in metadata response");
+    assert!(
+        result.get("text").is_none(),
+        "text should not be in metadata response"
+    );
+    assert!(
+        result.get("value").is_none(),
+        "value should not be in metadata response"
+    );
 }
 
 // ── quota endpoint ────────────────────────────────────────────────────────────
 
 #[tokio::test]
 async fn quota_endpoint() {
-    let req = cf_req("GET", "/v4/accounts/acct123/secrets_store/quota", json!(null));
+    let req = cf_req(
+        "GET",
+        "/v4/accounts/acct123/secrets_store/quota",
+        json!(null),
+    );
     let (status, body) = common::call(app(), req).await;
     assert_eq!(status, StatusCode::OK);
     assert_cf_envelope(&body);
@@ -155,7 +175,10 @@ async fn missing_secret_cf_error() {
     let (status, body) = common::call(app(), req).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["success"], false, "success should be false for errors");
-    assert!(body["errors"].as_array().map(|a| !a.is_empty()).unwrap_or(false));
+    assert!(body["errors"]
+        .as_array()
+        .map(|a| !a.is_empty())
+        .unwrap_or(false));
 }
 
 // ── auth: X-Auth-Key must be a verifiable credential ──────────────────────────

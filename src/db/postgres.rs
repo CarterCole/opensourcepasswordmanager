@@ -1,5 +1,5 @@
 //! PostgreSQL backend implementation.
-use crate::db::{SecretBackend, DbError, EncryptResult, Result, models::*};
+use crate::db::{models::*, DbError, EncryptResult, Result, SecretBackend};
 use async_trait::async_trait;
 use sqlx::{Pool, Postgres, Row};
 use uuid::Uuid;
@@ -154,7 +154,12 @@ impl SecretBackend for PostgresBackend {
 
         tx.commit().await?;
         let value_type = version.value_type.clone();
-        Ok(SecretValue { plaintext: input.plaintext, value_type, secret, version })
+        Ok(SecretValue {
+            plaintext: input.plaintext,
+            value_type,
+            secret,
+            version,
+        })
     }
 
     async fn get_secret(
@@ -185,8 +190,11 @@ impl SecretBackend for PostgresBackend {
                  FROM secret_versions
                  WHERE secret_id = $1 AND version_num = $2 AND destroyed_at IS NULL",
             )
-            .bind(secret.id).bind(v)
-            .fetch_optional(&self.pool).await?.ok_or(DbError::NotFound)?
+            .bind(secret.id)
+            .bind(v)
+            .fetch_optional(&self.pool)
+            .await?
+            .ok_or(DbError::NotFound)?
         } else {
             sqlx::query(
                 "SELECT id, secret_id, version_num, dek_id, encrypted_value, nonce,
@@ -196,7 +204,9 @@ impl SecretBackend for PostgresBackend {
                  ORDER BY version_num DESC LIMIT 1",
             )
             .bind(secret.id)
-            .fetch_optional(&self.pool).await?.ok_or(DbError::NotFound)?
+            .fetch_optional(&self.pool)
+            .await?
+            .ok_or(DbError::NotFound)?
         };
 
         let sv = Self::row_to_version(&version_row);
@@ -204,19 +214,23 @@ impl SecretBackend for PostgresBackend {
             return Err(DbError::NotFound);
         }
 
-        let dek_row = sqlx::query(
-            "SELECT encrypted_dek FROM data_encryption_keys WHERE id = $1",
-        )
-        .bind(sv.dek_id)
-        .fetch_optional(&self.pool).await?
-        .ok_or_else(|| DbError::Invalid("DEK not found".into()))?;
+        let dek_row = sqlx::query("SELECT encrypted_dek FROM data_encryption_keys WHERE id = $1")
+            .bind(sv.dek_id)
+            .fetch_optional(&self.pool)
+            .await?
+            .ok_or_else(|| DbError::Invalid("DEK not found".into()))?;
 
         let encrypted_dek: Vec<u8> = dek_row.get("encrypted_dek");
         let plaintext = (self.decrypt)(&sv.encrypted_value, &sv.nonce, &encrypted_dek)
             .map_err(|e| DbError::Invalid(e.to_string()))?;
 
         let value_type = sv.value_type.clone();
-        Ok(SecretValue { secret, version: sv, plaintext, value_type })
+        Ok(SecretValue {
+            secret,
+            version: sv,
+            plaintext,
+            value_type,
+        })
     }
 
     async fn update_secret(&self, secret_id: Uuid, input: WriteSecret) -> Result<SecretValue> {
@@ -228,7 +242,9 @@ impl SecretBackend for PostgresBackend {
              FROM secrets WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
         )
         .bind(secret_id)
-        .fetch_optional(&mut *tx).await?.ok_or(DbError::NotFound)?;
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(DbError::NotFound)?;
         let secret = Self::row_to_secret(&secret_row);
 
         let cur_ver = self.max_version_num(secret_id).await?;
@@ -247,8 +263,11 @@ impl SecretBackend for PostgresBackend {
             "INSERT INTO data_encryption_keys (id, kek_version_id, encrypted_dek)
              VALUES ($1, $2, $3)",
         )
-        .bind(enc.dek_id).bind(enc.kek_version_id).bind(&enc.encrypted_dek)
-        .execute(&mut *tx).await?;
+        .bind(enc.dek_id)
+        .bind(enc.kek_version_id)
+        .bind(&enc.encrypted_dek)
+        .execute(&mut *tx)
+        .await?;
 
         let new_ver = cur_ver + 1;
         let version_row = sqlx::query(
@@ -258,10 +277,15 @@ impl SecretBackend for PostgresBackend {
              RETURNING id, secret_id, version_num, dek_id, encrypted_value, nonce,
                        value_type, created_at, created_by, deleted_at, destroyed_at",
         )
-        .bind(secret_id).bind(new_ver).bind(enc.dek_id)
-        .bind(&enc.ciphertext).bind(&enc.nonce)
-        .bind(&input.value_type).bind(input.actor_id)
-        .fetch_one(&mut *tx).await?;
+        .bind(secret_id)
+        .bind(new_ver)
+        .bind(enc.dek_id)
+        .bind(&enc.ciphertext)
+        .bind(&enc.nonce)
+        .bind(&input.value_type)
+        .bind(input.actor_id)
+        .fetch_one(&mut *tx)
+        .await?;
         let version = Self::row_to_version(&version_row);
 
         sqlx::query(
@@ -276,12 +300,20 @@ impl SecretBackend for PostgresBackend {
              description = COALESCE($2, description),
              tags = COALESCE($3, tags) WHERE id = $1",
         )
-        .bind(secret_id).bind(&input.description).bind(&input.tags)
-        .execute(&mut *tx).await?;
+        .bind(secret_id)
+        .bind(&input.description)
+        .bind(&input.tags)
+        .execute(&mut *tx)
+        .await?;
 
         tx.commit().await?;
         let value_type = version.value_type.clone();
-        Ok(SecretValue { secret, version, plaintext: input.plaintext, value_type })
+        Ok(SecretValue {
+            secret,
+            version,
+            plaintext: input.plaintext,
+            value_type,
+        })
     }
 
     async fn list_secrets(&self, environment_id: Uuid, path: &str) -> Result<Vec<SecretMeta>> {
@@ -296,18 +328,22 @@ impl SecretBackend for PostgresBackend {
         )
         .bind(environment_id)
         .bind(format!("{}%", path))
-        .fetch_all(&self.pool).await?;
+        .fetch_all(&self.pool)
+        .await?;
 
-        Ok(rows.iter().map(|r| SecretMeta {
-            id: r.get("id"),
-            name: r.get("name"),
-            path: r.get("path"),
-            current_version: r.get("current_version"),
-            created_at: r.get("created_at"),
-            updated_at: r.get("updated_at"),
-            deleted_at: r.get("deleted_at"),
-            tags: r.get("tags"),
-        }).collect())
+        Ok(rows
+            .iter()
+            .map(|r| SecretMeta {
+                id: r.get("id"),
+                name: r.get("name"),
+                path: r.get("path"),
+                current_version: r.get("current_version"),
+                created_at: r.get("created_at"),
+                updated_at: r.get("updated_at"),
+                deleted_at: r.get("deleted_at"),
+                tags: r.get("tags"),
+            })
+            .collect())
     }
 
     async fn get_secret_meta(&self, secret_id: Uuid) -> Result<SecretMeta> {
@@ -320,7 +356,9 @@ impl SecretBackend for PostgresBackend {
              WHERE s.id = $1 GROUP BY s.id",
         )
         .bind(secret_id)
-        .fetch_optional(&self.pool).await?.ok_or(DbError::NotFound)?;
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(DbError::NotFound)?;
 
         Ok(SecretMeta {
             id: r.get("id"),
@@ -340,7 +378,10 @@ impl SecretBackend for PostgresBackend {
                 "UPDATE secret_versions SET deleted_at = NOW()
                  WHERE secret_id = $1 AND version_num = $2 AND destroyed_at IS NULL",
             )
-            .bind(secret_id).bind(v).execute(&self.pool).await?;
+            .bind(secret_id)
+            .bind(v)
+            .execute(&self.pool)
+            .await?;
         }
         Ok(())
     }
@@ -351,7 +392,10 @@ impl SecretBackend for PostgresBackend {
                 "UPDATE secret_versions SET deleted_at = NULL
                  WHERE secret_id = $1 AND version_num = $2 AND destroyed_at IS NULL",
             )
-            .bind(secret_id).bind(v).execute(&self.pool).await?;
+            .bind(secret_id)
+            .bind(v)
+            .execute(&self.pool)
+            .await?;
         }
         Ok(())
     }
@@ -363,16 +407,19 @@ impl SecretBackend for PostgresBackend {
                  SET destroyed_at = NOW(), encrypted_value = ''::bytea, nonce = ''::bytea
                  WHERE secret_id = $1 AND version_num = $2",
             )
-            .bind(secret_id).bind(v).execute(&self.pool).await?;
+            .bind(secret_id)
+            .bind(v)
+            .execute(&self.pool)
+            .await?;
         }
         Ok(())
     }
 
     async fn delete_secret(&self, secret_id: Uuid) -> Result<()> {
-        sqlx::query(
-            "UPDATE secrets SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
-        )
-        .bind(secret_id).execute(&self.pool).await?;
+        sqlx::query("UPDATE secrets SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL")
+            .bind(secret_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -381,8 +428,11 @@ impl SecretBackend for PostgresBackend {
             "INSERT INTO secret_labels (secret_id, label, version_num) VALUES ($1, $2, $3)
              ON CONFLICT (secret_id, label) DO UPDATE SET version_num = EXCLUDED.version_num",
         )
-        .bind(secret_id).bind(label).bind(version_num)
-        .execute(&self.pool).await?;
+        .bind(secret_id)
+        .bind(label)
+        .bind(version_num)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -393,7 +443,8 @@ impl SecretBackend for PostgresBackend {
              FROM secret_versions WHERE secret_id = $1 ORDER BY version_num DESC",
         )
         .bind(secret_id)
-        .fetch_all(&self.pool).await?;
+        .fetch_all(&self.pool)
+        .await?;
         Ok(rows.iter().map(|r| Self::row_to_version(r)).collect())
     }
 
@@ -416,14 +467,27 @@ impl SecretBackend for PostgresBackend {
               resource_type, resource_id, resource_name, ip_address, metadata)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
         )
-        .bind(org_id).bind(actor_id).bind(actor_type).bind(actor_email)
-        .bind(action).bind(resource_type).bind(resource_id)
-        .bind(resource_name).bind(ip).bind(metadata)
-        .execute(&self.pool).await?;
+        .bind(org_id)
+        .bind(actor_id)
+        .bind(actor_type)
+        .bind(actor_email)
+        .bind(action)
+        .bind(resource_type)
+        .bind(resource_id)
+        .bind(resource_name)
+        .bind(ip)
+        .bind(metadata)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
-    async fn get_vault_mount(&self, org_id: Uuid, namespace: &str, mount_path: &str) -> Result<VaultMount> {
+    async fn get_vault_mount(
+        &self,
+        org_id: Uuid,
+        namespace: &str,
+        mount_path: &str,
+    ) -> Result<VaultMount> {
         sqlx::query(
             "SELECT id, org_id, namespace, mount_path, environment_id, engine_type, config, created_at
              FROM vault_mounts WHERE org_id = $1 AND namespace = $2 AND mount_path = $3",
@@ -473,7 +537,10 @@ impl SecretBackend for PostgresBackend {
 
         let proj: Option<Uuid> = sqlx::query_scalar(
             "SELECT id FROM projects WHERE org_id = $1 ORDER BY created_at LIMIT 1",
-        ).bind(org_id).fetch_optional(&mut *tx).await?;
+        )
+        .bind(org_id)
+        .fetch_optional(&mut *tx)
+        .await?;
         let project_id = proj.ok_or(DbError::NotFound)?;
 
         let ns_id = Uuid::new_v4();
@@ -481,19 +548,32 @@ impl SecretBackend for PostgresBackend {
             "INSERT INTO namespaces (id, org_id, path) VALUES ($1, $2, $3)
              ON CONFLICT (org_id, path) DO NOTHING
              RETURNING id, org_id, path, created_at",
-        ).bind(ns_id).bind(org_id).bind(path).fetch_optional(&mut *tx).await?;
+        )
+        .bind(ns_id)
+        .bind(org_id)
+        .bind(path)
+        .fetch_optional(&mut *tx)
+        .await?;
         let row = inserted.ok_or_else(|| DbError::Conflict("namespace already exists".into()))?;
 
         let env_id: Uuid = sqlx::query_scalar(
             "INSERT INTO environments (project_id, name, slug) VALUES ($1, $2, $3) RETURNING id",
         )
-        .bind(project_id).bind(format!("ns:{path}")).bind(format!("ns-{ns_id}"))
-        .fetch_one(&mut *tx).await?;
+        .bind(project_id)
+        .bind(format!("ns:{path}"))
+        .bind(format!("ns-{ns_id}"))
+        .fetch_one(&mut *tx)
+        .await?;
 
         sqlx::query(
             "INSERT INTO vault_mounts (org_id, namespace, mount_path, environment_id, engine_type)
              VALUES ($1, $2, 'secret', $3, 'kv-v2')",
-        ).bind(org_id).bind(path).bind(env_id).execute(&mut *tx).await?;
+        )
+        .bind(org_id)
+        .bind(path)
+        .bind(env_id)
+        .execute(&mut *tx)
+        .await?;
 
         tx.commit().await?;
         Ok(Namespace {
@@ -505,36 +585,55 @@ impl SecretBackend for PostgresBackend {
     }
 
     async fn get_namespace(&self, org_id: Uuid, path: &str) -> Result<Namespace> {
-        sqlx::query("SELECT id, org_id, path, created_at FROM namespaces WHERE org_id = $1 AND path = $2")
-            .bind(org_id).bind(path)
-            .fetch_optional(&self.pool).await?
+        sqlx::query(
+            "SELECT id, org_id, path, created_at FROM namespaces WHERE org_id = $1 AND path = $2",
+        )
+        .bind(org_id)
+        .bind(path)
+        .fetch_optional(&self.pool)
+        .await?
+        .map(|r| Namespace {
+            id: r.get("id"),
+            org_id: r.get("org_id"),
+            path: r.get("path"),
+            created_at: r.get("created_at"),
+        })
+        .ok_or(DbError::NotFound)
+    }
+
+    async fn list_namespaces(&self, org_id: Uuid) -> Result<Vec<Namespace>> {
+        let rows = sqlx::query(
+            "SELECT id, org_id, path, created_at FROM namespaces WHERE org_id = $1 ORDER BY path",
+        )
+        .bind(org_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
             .map(|r| Namespace {
                 id: r.get("id"),
                 org_id: r.get("org_id"),
                 path: r.get("path"),
                 created_at: r.get("created_at"),
             })
-            .ok_or(DbError::NotFound)
-    }
-
-    async fn list_namespaces(&self, org_id: Uuid) -> Result<Vec<Namespace>> {
-        let rows = sqlx::query(
-            "SELECT id, org_id, path, created_at FROM namespaces WHERE org_id = $1 ORDER BY path",
-        ).bind(org_id).fetch_all(&self.pool).await?;
-        Ok(rows.iter().map(|r| Namespace {
-            id: r.get("id"),
-            org_id: r.get("org_id"),
-            path: r.get("path"),
-            created_at: r.get("created_at"),
-        }).collect())
+            .collect())
     }
 
     async fn delete_namespace(&self, org_id: Uuid, path: &str) -> Result<()> {
         let mut tx = self.pool.begin().await?;
-        let child_like = format!("{}/%", path.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+        let child_like = format!(
+            "{}/%",
+            path.replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        );
         let has_children: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM namespaces WHERE org_id = $1 AND path LIKE $2)",
-        ).bind(org_id).bind(&child_like).fetch_one(&mut *tx).await?;
+        )
+        .bind(org_id)
+        .bind(&child_like)
+        .fetch_one(&mut *tx)
+        .await?;
         if has_children {
             return Err(DbError::Conflict("namespace has child namespaces".into()));
         }
@@ -542,7 +641,11 @@ impl SecretBackend for PostgresBackend {
             "SELECT EXISTS (
                 SELECT 1 FROM secrets s JOIN vault_mounts m ON m.environment_id = s.environment_id
                 WHERE m.org_id = $1 AND m.namespace = $2 AND s.deleted_at IS NULL)",
-        ).bind(org_id).bind(path).fetch_one(&mut *tx).await?;
+        )
+        .bind(org_id)
+        .bind(path)
+        .fetch_one(&mut *tx)
+        .await?;
         if has_secrets {
             return Err(DbError::Conflict("namespace is not empty".into()));
         }
@@ -550,15 +653,23 @@ impl SecretBackend for PostgresBackend {
             "SELECT environment_id FROM vault_mounts WHERE org_id = $1 AND namespace = $2 AND environment_id IS NOT NULL",
         ).bind(org_id).bind(path).fetch_all(&mut *tx).await?;
         sqlx::query("DELETE FROM vault_mounts WHERE org_id = $1 AND namespace = $2")
-            .bind(org_id).bind(path).execute(&mut *tx).await?;
+            .bind(org_id)
+            .bind(path)
+            .execute(&mut *tx)
+            .await?;
         let gone = sqlx::query("DELETE FROM namespaces WHERE org_id = $1 AND path = $2")
-            .bind(org_id).bind(path).execute(&mut *tx).await?;
+            .bind(org_id)
+            .bind(path)
+            .execute(&mut *tx)
+            .await?;
         if gone.rows_affected() == 0 {
             return Err(DbError::NotFound);
         }
         // Environments cascade-delete their (all soft-deleted) secrets.
         sqlx::query("DELETE FROM environments WHERE id = ANY($1)")
-            .bind(&env_ids).execute(&mut *tx).await?;
+            .bind(&env_ids)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         Ok(())
     }
@@ -567,8 +678,11 @@ impl SecretBackend for PostgresBackend {
         sqlx::query(
             "UPDATE secrets SET tags = $2, updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
         )
-        .bind(secret_id).bind(&tags)
-        .execute(&self.pool).await.map_err(DbError::Sqlx)?;
+        .bind(secret_id)
+        .bind(&tags)
+        .execute(&self.pool)
+        .await
+        .map_err(DbError::Sqlx)?;
         Ok(())
     }
 
@@ -581,13 +695,21 @@ impl SecretBackend for PostgresBackend {
         Ok(())
     }
 
-    async fn restore_secret(&self, environment_id: Uuid, path: &str, name: &str) -> Result<SecretMeta> {
+    async fn restore_secret(
+        &self,
+        environment_id: Uuid,
+        path: &str,
+        name: &str,
+    ) -> Result<SecretMeta> {
         let rows_affected = sqlx::query(
             "UPDATE secrets SET deleted_at = NULL, updated_at = NOW()
              WHERE environment_id = $1 AND path = $2 AND name = $3 AND deleted_at IS NOT NULL",
         )
-        .bind(environment_id).bind(path).bind(name)
-        .execute(&self.pool).await?
+        .bind(environment_id)
+        .bind(path)
+        .bind(name)
+        .execute(&self.pool)
+        .await?
         .rows_affected();
 
         if rows_affected == 0 {
@@ -602,8 +724,12 @@ impl SecretBackend for PostgresBackend {
              WHERE s.environment_id = $1 AND s.path = $2 AND s.name = $3 AND s.deleted_at IS NULL
              GROUP BY s.id",
         )
-        .bind(environment_id).bind(path).bind(name)
-        .fetch_optional(&self.pool).await?.ok_or(DbError::NotFound)?;
+        .bind(environment_id)
+        .bind(path)
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(DbError::NotFound)?;
 
         Ok(SecretMeta {
             id: r.get("id"),

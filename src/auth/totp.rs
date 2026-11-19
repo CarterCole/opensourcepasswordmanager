@@ -29,8 +29,16 @@ impl TotpService {
         let secret = Secret::Encoded(secret_b32.to_string())
             .to_bytes()
             .map_err(|e| anyhow!("invalid TOTP secret: {e:?}"))?;
-        TOTP::new(Algorithm::SHA1, DIGITS, SKEW, STEP, secret, Some(ISSUER.to_string()), account.to_string())
-            .map_err(|e| anyhow!("totp init: {e}"))
+        TOTP::new(
+            Algorithm::SHA1,
+            DIGITS,
+            SKEW,
+            STEP,
+            secret,
+            Some(ISSUER.to_string()),
+            account.to_string(),
+        )
+        .map_err(|e| anyhow!("totp init: {e}"))
     }
 
     /// `otpauth://` provisioning URI for authenticator apps.
@@ -84,7 +92,9 @@ impl BackupCodes {
     /// so the caller can remove it. `None` if no match.
     pub fn consume(code: &str, hashes: &[String]) -> Option<usize> {
         let code = code.trim();
-        hashes.iter().position(|h| crate::auth::ApiKeyService::verify(code, h))
+        hashes
+            .iter()
+            .position(|h| crate::auth::ApiKeyService::verify(code, h))
     }
 }
 
@@ -97,7 +107,16 @@ mod tests {
     fn verify_accepts_current_code() {
         let secret = TotpService::generate_secret();
         let bytes = Secret::Encoded(secret.clone()).to_bytes().unwrap();
-        let t = TOTP::new(Algorithm::SHA1, DIGITS, SKEW, STEP, bytes, None, "me".into()).unwrap();
+        let t = TOTP::new(
+            Algorithm::SHA1,
+            DIGITS,
+            SKEW,
+            STEP,
+            bytes,
+            None,
+            "me".into(),
+        )
+        .unwrap();
         let code = t.generate_current().unwrap();
         assert!(TotpService::verify(&secret, &code, "me"));
     }

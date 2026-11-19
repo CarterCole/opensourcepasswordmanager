@@ -53,7 +53,11 @@ pub async fn list_mounts(
     State(state): State<VaultState>,
     Extension(claims): Extension<VaultClaims>,
 ) -> Response {
-    let mounts = match state.db.list_vault_mounts(claims.org_id, &claims.namespace).await {
+    let mounts = match state
+        .db
+        .list_vault_mounts(claims.org_id, &claims.namespace)
+        .await
+    {
         Ok(m) => m,
         Err(e) => return VaultError::internal(e.to_string()),
     };
@@ -102,14 +106,20 @@ fn abs_ns_path(claims: &VaultClaims, rel: &str) -> Result<String, Response> {
         return Err(VaultError::bad_request("missing namespace path"));
     }
     for seg in rel.split('/') {
-        let ok = seg.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        let ok = seg
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
             && seg != "."
             && seg != "..";
         if !ok {
-            return Err(VaultError::bad_request(format!("invalid namespace name \"{seg}\"")));
+            return Err(VaultError::bad_request(format!(
+                "invalid namespace name \"{seg}\""
+            )));
         }
         if crate::api::vault::auth::RESERVED_NS_NAMES.contains(&seg) {
-            return Err(VaultError::bad_request(format!("\"{seg}\" is a reserved name")));
+            return Err(VaultError::bad_request(format!(
+                "\"{seg}\" is a reserved name"
+            )));
         }
     }
     Ok(crate::api::vault::auth::join_ns(&claims.namespace, &rel))
@@ -135,11 +145,18 @@ pub async fn ns_list(
         Ok(v) => v,
         Err(e) => return VaultError::internal(e.to_string()),
     };
-    let children: Vec<_> = all.iter().filter(|n| is_direct_child(&claims.namespace, &n.path)).collect();
+    let children: Vec<_> = all
+        .iter()
+        .filter(|n| is_direct_child(&claims.namespace, &n.path))
+        .collect();
     if children.is_empty() {
         return VaultError::not_found();
     }
-    let prefix_len = if claims.namespace.is_empty() { 0 } else { claims.namespace.len() + 1 };
+    let prefix_len = if claims.namespace.is_empty() {
+        0
+    } else {
+        claims.namespace.len() + 1
+    };
     let mut keys = Vec::new();
     let mut key_info = serde_json::Map::new();
     for n in children {
@@ -147,7 +164,10 @@ pub async fn ns_list(
         key_info.insert(key.clone(), ns_json(n));
         keys.push(key);
     }
-    Json(VaultResponse::kv(serde_json::json!({ "keys": keys, "key_info": key_info }))).into_response()
+    Json(VaultResponse::kv(
+        serde_json::json!({ "keys": keys, "key_info": key_info }),
+    ))
+    .into_response()
 }
 
 pub async fn ns_read(
@@ -179,15 +199,27 @@ pub async fn ns_create(
     // namespaces must already exist (create_namespace checks the parent).
     match state.db.create_namespace(claims.org_id, &path).await {
         Ok(ns) => {
-            let _ = state.db.write_audit(
-                Some(claims.org_id), claims.user_id, "vault_token", None,
-                "namespace.create", Some("namespace"), Some(ns.id), Some(&ns.path),
-                None, serde_json::json!({}),
-            ).await;
+            let _ = state
+                .db
+                .write_audit(
+                    Some(claims.org_id),
+                    claims.user_id,
+                    "vault_token",
+                    None,
+                    "namespace.create",
+                    Some("namespace"),
+                    Some(ns.id),
+                    Some(&ns.path),
+                    None,
+                    serde_json::json!({}),
+                )
+                .await;
             Json(VaultResponse::kv(ns_json(&ns))).into_response()
         }
         Err(crate::db::DbError::Conflict(m)) => VaultError::bad_request(m),
-        Err(crate::db::DbError::NotFound) => VaultError::resp(StatusCode::NOT_FOUND, "parent namespace not found"),
+        Err(crate::db::DbError::NotFound) => {
+            VaultError::resp(StatusCode::NOT_FOUND, "parent namespace not found")
+        }
         Err(e) => VaultError::internal(e.to_string()),
     }
 }
@@ -203,11 +235,21 @@ pub async fn ns_delete(
     };
     match state.db.delete_namespace(claims.org_id, &path).await {
         Ok(()) => {
-            let _ = state.db.write_audit(
-                Some(claims.org_id), claims.user_id, "vault_token", None,
-                "namespace.delete", Some("namespace"), None, Some(&path),
-                None, serde_json::json!({}),
-            ).await;
+            let _ = state
+                .db
+                .write_audit(
+                    Some(claims.org_id),
+                    claims.user_id,
+                    "vault_token",
+                    None,
+                    "namespace.delete",
+                    Some("namespace"),
+                    None,
+                    Some(&path),
+                    None,
+                    serde_json::json!({}),
+                )
+                .await;
             StatusCode::NO_CONTENT.into_response()
         }
         Err(crate::db::DbError::Conflict(m)) => VaultError::bad_request(m),
@@ -254,7 +296,15 @@ pub async fn token_create(
     let user_id = claims.user_id.unwrap_or_else(Uuid::new_v4);
     let child_token = state
         .sessions
-        .issue_in_namespace(user_id, claims.org_id, "", policies.clone(), true, ttl_seconds, &claims.namespace)
+        .issue_in_namespace(
+            user_id,
+            claims.org_id,
+            "",
+            policies.clone(),
+            true,
+            ttl_seconds,
+            &claims.namespace,
+        )
         .unwrap_or_else(|_| claims.token.clone());
 
     Json(AuthResponse {
@@ -323,7 +373,11 @@ pub async fn kv_read(
         metadata: KvVersionMeta {
             created_time: sv.version.created_at,
             custom_metadata: None,
-            deletion_time: sv.version.deleted_at.map(|t| t.to_rfc3339()).unwrap_or_default(),
+            deletion_time: sv
+                .version
+                .deleted_at
+                .map(|t| t.to_rfc3339())
+                .unwrap_or_default(),
             destroyed,
             version: sv.version.version_num,
         },
@@ -431,7 +485,11 @@ pub async fn kv_delete_versions(
         Err(e) if is_not_found(&e) => return VaultError::not_found(),
         Err(e) => return VaultError::internal(e.to_string()),
     };
-    if let Err(e) = state.db.soft_delete_versions(sv.secret.id, &req.versions).await {
+    if let Err(e) = state
+        .db
+        .soft_delete_versions(sv.secret.id, &req.versions)
+        .await
+    {
         return VaultError::internal(e.to_string());
     }
     StatusCode::NO_CONTENT.into_response()
@@ -455,7 +513,11 @@ pub async fn kv_undelete_versions(
         Err(e) if is_not_found(&e) => return VaultError::not_found(),
         Err(e) => return VaultError::internal(e.to_string()),
     };
-    if let Err(e) = state.db.undelete_versions(sv.secret.id, &req.versions).await {
+    if let Err(e) = state
+        .db
+        .undelete_versions(sv.secret.id, &req.versions)
+        .await
+    {
         return VaultError::internal(e.to_string());
     }
     StatusCode::NO_CONTENT.into_response()
@@ -522,8 +584,16 @@ pub async fn kv_read_metadata(
         );
     }
 
-    let current = all_versions.iter().map(|v| v.version_num).max().unwrap_or(0);
-    let oldest = all_versions.iter().map(|v| v.version_num).min().unwrap_or(0);
+    let current = all_versions
+        .iter()
+        .map(|v| v.version_num)
+        .max()
+        .unwrap_or(0);
+    let oldest = all_versions
+        .iter()
+        .map(|v| v.version_num)
+        .min()
+        .unwrap_or(0);
 
     Json(VaultResponse::kv(KvMetadataResponse {
         cas_required: false,
@@ -582,8 +652,16 @@ pub async fn kv_list(
                 },
             );
         }
-        let current = all_versions.iter().map(|v| v.version_num).max().unwrap_or(0);
-        let oldest = all_versions.iter().map(|v| v.version_num).min().unwrap_or(0);
+        let current = all_versions
+            .iter()
+            .map(|v| v.version_num)
+            .max()
+            .unwrap_or(0);
+        let oldest = all_versions
+            .iter()
+            .map(|v| v.version_num)
+            .min()
+            .unwrap_or(0);
         return Json(VaultResponse::kv(KvMetadataResponse {
             cas_required: false,
             created_time: sv.secret.created_at,
@@ -666,7 +744,11 @@ async fn resolve_env(
     claims: &VaultClaims,
     mount: &str,
 ) -> Result<Uuid, Response> {
-    match state.db.get_vault_mount(claims.org_id, &claims.namespace, mount).await {
+    match state
+        .db
+        .get_vault_mount(claims.org_id, &claims.namespace, mount)
+        .await
+    {
         Ok(m) => {
             if let Some(env_id) = m.environment_id {
                 return Ok(env_id);

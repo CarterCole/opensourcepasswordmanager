@@ -1,6 +1,6 @@
 //! GCP Secret Manager sync provider.
-use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use crate::sync::engine::RemoteSecret;
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 
 pub struct GcpCredentials {
     pub endpoint_url: Option<String>,
@@ -26,11 +26,7 @@ impl GcpProvider {
     }
 
     fn project_url(&self) -> String {
-        format!(
-            "{}/v1/projects/{}",
-            self.base_url(),
-            self.creds.project_id
-        )
+        format!("{}/v1/projects/{}", self.base_url(), self.creds.project_id)
     }
 
     pub async fn list_secrets(&self) -> anyhow::Result<Vec<RemoteSecret>> {

@@ -37,8 +37,10 @@ pub fn check_and_record(key: &str) -> Result<(), u64> {
     let mut map = store().lock().unwrap_or_else(|e| e.into_inner());
 
     if map.len() > MAX_KEYS {
-        map.retain(|_, b| b.locked_until.map(|u| u > now).unwrap_or(false)
-            || now.duration_since(b.window_start) <= WINDOW);
+        map.retain(|_, b| {
+            b.locked_until.map(|u| u > now).unwrap_or(false)
+                || now.duration_since(b.window_start) <= WINDOW
+        });
     }
 
     let b = map.entry(key.to_string()).or_insert(Bucket {
@@ -72,7 +74,10 @@ pub fn check_and_record(key: &str) -> Result<(), u64> {
 
 /// Clear a key's counter after a successful authentication.
 pub fn reset(key: &str) {
-    store().lock().unwrap_or_else(|e| e.into_inner()).remove(key);
+    store()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(key);
 }
 
 #[cfg(test)]

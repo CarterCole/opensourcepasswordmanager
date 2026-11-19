@@ -48,7 +48,9 @@ pub async fn require_auth(state: &AppState, headers: &HeaderMap) -> Result<(), S
         candidates.push(v.trim().to_string());
     }
     // Browser clients authenticate via the httpOnly session cookie.
-    if let Some(c) = crate::api::vault::auth::cookie_value(headers, crate::api::vault::auth::SESSION_COOKIE) {
+    if let Some(c) =
+        crate::api::vault::auth::cookie_value(headers, crate::api::vault::auth::SESSION_COOKIE)
+    {
         candidates.push(c);
     }
 

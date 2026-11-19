@@ -9,7 +9,9 @@ pub struct VaultError {
 
 impl VaultError {
     pub fn new(msg: impl Into<String>) -> Self {
-        Self { errors: vec![msg.into()] }
+        Self {
+            errors: vec![msg.into()],
+        }
     }
     pub fn resp(status: StatusCode, msg: impl Into<String>) -> axum::response::Response {
         (status, Json(Self::new(msg))).into_response()

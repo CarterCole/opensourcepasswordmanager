@@ -120,10 +120,8 @@ impl Config {
         };
 
         Ok(Self {
-            listen_addr: std::env::var("SECRETD_LISTEN")
-                .unwrap_or_else(|_| "0.0.0.0:8200".into()),
-            database_url: std::env::var("DATABASE_URL")
-                .context("DATABASE_URL not set")?,
+            listen_addr: std::env::var("SECRETD_LISTEN").unwrap_or_else(|_| "0.0.0.0:8200".into()),
+            database_url: std::env::var("DATABASE_URL").context("DATABASE_URL not set")?,
             dev_root_token,
             jwt_secret,
             auth: AuthConfig {
@@ -131,7 +129,7 @@ impl Config {
                 email: std::env::var("SECRETD_AUTH_EMAIL")
                     .map(|v| v == "true" || v == "1")
                     .unwrap_or(false),
-                ldap: None,  // configured via TOML only (too many fields for env)
+                ldap: None,   // configured via TOML only (too many fields for env)
                 oidc: vec![], // configured via TOML only
                 rp_id: std::env::var("SECRETD_RP_ID").ok(),
                 rp_origin: std::env::var("SECRETD_RP_ORIGIN").ok(),

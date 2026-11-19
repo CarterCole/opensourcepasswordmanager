@@ -7,8 +7,8 @@ use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
-    pub sub: String,       // user UUID
-    pub org: String,       // org UUID
+    pub sub: String, // user UUID
+    pub org: String, // org UUID
     pub email: String,
     pub roles: Vec<String>,
     pub exp: usize,
@@ -43,7 +43,15 @@ impl SessionService {
         two_fa_verified: bool,
         ttl_seconds: i64,
     ) -> Result<String> {
-        self.issue_in_namespace(user_id, org_id, email, roles, two_fa_verified, ttl_seconds, "")
+        self.issue_in_namespace(
+            user_id,
+            org_id,
+            email,
+            roles,
+            two_fa_verified,
+            ttl_seconds,
+            "",
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -90,14 +98,23 @@ mod tests {
     fn sample_claims(ttl: i64) -> (Uuid, Uuid, String, Vec<String>, bool, i64) {
         let user_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
         let org_id = Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap();
-        (user_id, org_id, "test@example.com".into(), vec!["admin".into()], true, ttl)
+        (
+            user_id,
+            org_id,
+            "test@example.com".into(),
+            vec!["admin".into()],
+            true,
+            ttl,
+        )
     }
 
     #[test]
     fn issue_and_validate_roundtrip() {
         let svc = test_service();
         let (uid, oid, email, roles, tfa, ttl) = sample_claims(3600);
-        let token = svc.issue(uid, oid, &email, roles.clone(), tfa, ttl).unwrap();
+        let token = svc
+            .issue(uid, oid, &email, roles.clone(), tfa, ttl)
+            .unwrap();
         let claims = svc.validate(&token).unwrap();
         assert_eq!(claims.sub, uid.to_string());
         assert_eq!(claims.org, oid.to_string());
@@ -131,6 +148,9 @@ mod tests {
         let svc2 = SessionService::from_secret("completely-different-secret");
         let (uid, oid, email, roles, tfa, ttl) = sample_claims(3600);
         let token = svc1.issue(uid, oid, &email, roles, tfa, ttl).unwrap();
-        assert!(svc2.validate(&token).is_err(), "token signed with different secret should fail");
+        assert!(
+            svc2.validate(&token).is_err(),
+            "token signed with different secret should fail"
+        );
     }
 }

@@ -210,7 +210,9 @@ impl SyncEngine {
                     secret_access_key: secret_access_key.clone(),
                     region: region.clone(),
                 };
-                AwsProvider::new(self.client.clone(), creds).list_secrets().await
+                AwsProvider::new(self.client.clone(), creds)
+                    .list_secrets()
+                    .await
             }
             SyncCredentials::Gcp {
                 endpoint_url,
@@ -223,7 +225,9 @@ impl SyncEngine {
                     project_id: project_id.clone(),
                     token: token.clone(),
                 };
-                GcpProvider::new(self.client.clone(), creds).list_secrets().await
+                GcpProvider::new(self.client.clone(), creds)
+                    .list_secrets()
+                    .await
             }
             SyncCredentials::Azure {
                 vault_url,
@@ -238,7 +242,9 @@ impl SyncEngine {
                     client_secret: client_secret.clone(),
                     tenant_id: tenant_id.clone(),
                 };
-                AzureProvider::new(self.client.clone(), creds).list_secrets().await
+                AzureProvider::new(self.client.clone(), creds)
+                    .list_secrets()
+                    .await
             }
             SyncCredentials::Vault {
                 address,
@@ -251,7 +257,9 @@ impl SyncEngine {
                     token: token.clone(),
                     mount: mount.clone(),
                 };
-                VaultProvider::new(self.client.clone(), creds).list_secrets().await
+                VaultProvider::new(self.client.clone(), creds)
+                    .list_secrets()
+                    .await
             }
         };
 

@@ -89,11 +89,7 @@ impl SecretStore {
             .await?)
     }
 
-    pub async fn list(
-        &self,
-        environment_id: Uuid,
-        path: &str,
-    ) -> anyhow::Result<Vec<SecretMeta>> {
+    pub async fn list(&self, environment_id: Uuid, path: &str) -> anyhow::Result<Vec<SecretMeta>> {
         Ok(self.backend.list_secrets(environment_id, path).await?)
     }
 

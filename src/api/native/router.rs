@@ -11,9 +11,9 @@ use axum::{
 use serde_json::json;
 use std::sync::Arc;
 
+use super::{auth, keys, passkey, totp, users};
 use crate::auth::{manager::AuthManager, session::SessionService};
 use crate::config::Config;
-use super::{auth, keys, passkey, totp, users};
 
 #[derive(Clone)]
 pub struct NativeState {
@@ -32,11 +32,11 @@ pub fn native_router(state: NativeState) -> Router {
     // AND an admin-tier role. `require_auth` is the outer layer so it runs first
     // and injects Claims; `require_admin` then checks the role (fail closed).
     let admin = Router::new()
-        .route("/keys",                 get(keys::list_keys))
-        .route("/keys",                 post(keys::create_key))
-        .route("/keys/:id",             delete(keys::revoke_key))
-        .route("/users",                get(users::list_users))
-        .route("/users/:id",            delete(users::deactivate_user))
+        .route("/keys", get(keys::list_keys))
+        .route("/keys", post(keys::create_key))
+        .route("/keys/:id", delete(keys::revoke_key))
+        .route("/users", get(users::list_users))
+        .route("/users/:id", delete(users::deactivate_user))
         .route("/users/:id/roles/:role", put(users::assign_role))
         .layer(middleware::from_fn(require_admin))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
@@ -49,16 +49,22 @@ pub fn native_router(state: NativeState) -> Router {
         .route("/auth/totp/enroll", post(totp::enroll))
         .route("/auth/totp/verify", post(totp::verify))
         .route("/auth/totp", delete(totp::disable))
-        .route("/auth/passkey/register/start", post(passkey::register_start))
-        .route("/auth/passkey/register/finish", post(passkey::register_finish))
+        .route(
+            "/auth/passkey/register/start",
+            post(passkey::register_start),
+        )
+        .route(
+            "/auth/passkey/register/finish",
+            post(passkey::register_finish),
+        )
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     // Public routes — no auth needed
     let public = Router::new()
         .route("/auth/providers", get(auth::list_providers))
-        .route("/auth/login",     post(auth::login))
-        .route("/auth/register",  post(auth::register))
-        .route("/auth/passkey/login/start",  post(passkey::login_start))
+        .route("/auth/login", post(auth::login))
+        .route("/auth/register", post(auth::register))
+        .route("/auth/passkey/login/start", post(passkey::login_start))
         .route("/auth/passkey/login/finish", post(passkey::login_finish));
 
     Router::new()
@@ -89,24 +95,27 @@ async fn require_admin(req: Request, next: Next) -> Response {
 ///   - A JWT session token — validated with JWT secret
 ///
 /// Injects `crate::auth::Claims` into request extensions for downstream handlers.
-async fn require_auth(
-    State(s): State<NativeState>,
-    mut req: Request,
-    next: Next,
-) -> Response {
-    let token = req.headers()
+async fn require_auth(State(s): State<NativeState>, mut req: Request, next: Next) -> Response {
+    let token = req
+        .headers()
         .get("Authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(str::to_string)
         // Browser clients authenticate via the httpOnly session cookie.
-        .or_else(|| crate::api::vault::auth::cookie_value(
-            req.headers(),
-            crate::api::vault::auth::SESSION_COOKIE,
-        ));
+        .or_else(|| {
+            crate::api::vault::auth::cookie_value(
+                req.headers(),
+                crate::api::vault::auth::SESSION_COOKIE,
+            )
+        });
 
     let Some(token) = token else {
-        return (StatusCode::UNAUTHORIZED, Json(json!({"error": "missing credentials"}))).into_response();
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "missing credentials"})),
+        )
+            .into_response();
     };
 
     // API key path
@@ -126,7 +135,13 @@ async fn require_auth(
                 req.extensions_mut().insert(claims);
                 return next.run(req).await;
             }
-            Err(_) => return (StatusCode::UNAUTHORIZED, Json(json!({"error": "invalid API key"}))).into_response(),
+            Err(_) => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({"error": "invalid API key"})),
+                )
+                    .into_response()
+            }
         }
     }
 
@@ -136,6 +151,10 @@ async fn require_auth(
             req.extensions_mut().insert(claims);
             next.run(req).await
         }
-        Err(_) => (StatusCode::UNAUTHORIZED, Json(json!({"error": "invalid token"}))).into_response(),
+        Err(_) => (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "invalid token"})),
+        )
+            .into_response(),
     }
 }

@@ -55,7 +55,11 @@ fn name_to_path_name(full_name: &str) -> (String, String) {
 }
 
 fn aws_error(status: StatusCode, type_name: &str, message: &str) -> Response {
-    (status, Json(json!({ "__type": type_name, "message": message }))).into_response()
+    (
+        status,
+        Json(json!({ "__type": type_name, "message": message })),
+    )
+        .into_response()
 }
 
 fn not_found(name: &str) -> Response {
@@ -111,7 +115,11 @@ pub async fn dispatch(
     body: axum::body::Bytes,
 ) -> Response {
     if require_auth(&state, &headers).await.is_err() {
-        return aws_error(StatusCode::FORBIDDEN, "AccessDeniedException", "Not authorized");
+        return aws_error(
+            StatusCode::FORBIDDEN,
+            "AccessDeniedException",
+            "Not authorized",
+        );
     }
 
     let target = headers
@@ -119,8 +127,7 @@ pub async fn dispatch(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    let body: Value =
-        serde_json::from_slice(&body).unwrap_or(Value::Object(Default::default()));
+    let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Object(Default::default()));
 
     match target {
         "secretsmanager.GetSecretValue" => get_secret_value(state, body).await,
@@ -137,7 +144,11 @@ pub async fn dispatch(
         "secretsmanager.TagResource" => tag_resource(state, body, true).await,
         "secretsmanager.UntagResource" => tag_resource(state, body, false).await,
         "secretsmanager.RotateSecret" => rotate_secret(state, body).await,
-        _ => aws_error(StatusCode::BAD_REQUEST, "InvalidRequestException", "Unknown operation"),
+        _ => aws_error(
+            StatusCode::BAD_REQUEST,
+            "InvalidRequestException",
+            "Unknown operation",
+        ),
     }
 }
 
@@ -155,7 +166,11 @@ async fn stages_for_version(
     let mut nums: Vec<i32> = all.iter().map(|v| v.version_num).collect();
     nums.sort_unstable();
     let max = nums.last().copied().unwrap_or(0);
-    let prev = if nums.len() >= 2 { nums[nums.len() - 2] } else { -1 };
+    let prev = if nums.len() >= 2 {
+        nums[nums.len() - 2]
+    } else {
+        -1
+    };
     if version_num == max {
         vec!["AWSCURRENT"]
     } else if version_num == prev {
@@ -191,14 +206,16 @@ async fn get_secret_value(state: AppState, body: Value) -> Response {
         .map(|s| s.to_string());
 
     // Always fetch current version first to get secret_id
-    let current = match state.store.get(state.default_env_id, &path, &sname, None).await {
+    let current = match state
+        .store
+        .get(state.default_env_id, &path, &sname, None)
+        .await
+    {
         Ok(sv) => sv,
         Err(_) => return not_found(&name),
     };
 
-    let sv = if version_id_req.is_some()
-        || version_stage_req.as_deref() == Some("AWSPREVIOUS")
-    {
+    let sv = if version_id_req.is_some() || version_stage_req.as_deref() == Some("AWSPREVIOUS") {
         let all_versions = match state.db.get_versions(current.secret.id).await {
             Ok(v) => v,
             Err(e) => {
@@ -220,12 +237,20 @@ async fn get_secret_value(state: AppState, body: Value) -> Response {
             let mut nums: Vec<i32> = all_versions.iter().map(|v| v.version_num).collect();
             nums.sort_unstable();
             let len = nums.len();
-            if len >= 2 { Some(nums[len - 2]) } else { None }
+            if len >= 2 {
+                Some(nums[len - 2])
+            } else {
+                None
+            }
         };
 
         match target_num {
             Some(vnum) => {
-                match state.store.get(state.default_env_id, &path, &sname, Some(vnum)).await {
+                match state
+                    .store
+                    .get(state.default_env_id, &path, &sname, Some(vnum))
+                    .await
+                {
                     Ok(sv) => sv,
                     Err(_) => {
                         return aws_error(
@@ -341,7 +366,14 @@ async fn put_secret_value(state: AppState, body: Value) -> Response {
 
     match state
         .store
-        .put(state.default_env_id, &path, &sname, &plaintext, value_type, None)
+        .put(
+            state.default_env_id,
+            &path,
+            &sname,
+            &plaintext,
+            value_type,
+            None,
+        )
         .await
     {
         Ok(sv) => (
@@ -376,13 +408,16 @@ async fn update_secret(state: AppState, body: Value) -> Response {
     let name = strip_arn(&secret_id_str).to_string();
     let (path, sname) = name_to_path_name(&name);
 
-    let existing = match state.store.get(state.default_env_id, &path, &sname, None).await {
+    let existing = match state
+        .store
+        .get(state.default_env_id, &path, &sname, None)
+        .await
+    {
         Ok(sv) => sv,
         Err(_) => return not_found(&name),
     };
 
-    let has_value =
-        body.get("SecretString").is_some() || body.get("SecretBinary").is_some();
+    let has_value = body.get("SecretString").is_some() || body.get("SecretBinary").is_some();
     let description = body
         .get("Description")
         .and_then(|v| v.as_str())
@@ -394,7 +429,14 @@ async fn update_secret(state: AppState, body: Value) -> Response {
         let (plaintext, value_type) = extract_secret_value(&body);
         match state
             .store
-            .put(state.default_env_id, &path, &sname, &plaintext, value_type, None)
+            .put(
+                state.default_env_id,
+                &path,
+                &sname,
+                &plaintext,
+                value_type,
+                None,
+            )
             .await
         {
             Ok(new_sv) => version_id = new_sv.version.id.to_string(),
@@ -447,7 +489,11 @@ async fn delete_secret(state: AppState, body: Value) -> Response {
     let name = strip_arn(&secret_id_str).to_string();
     let (path, sname) = name_to_path_name(&name);
 
-    match state.store.get(state.default_env_id, &path, &sname, None).await {
+    match state
+        .store
+        .get(state.default_env_id, &path, &sname, None)
+        .await
+    {
         Ok(sv) => {
             let _ = state.store.delete(sv.secret.id).await;
             (
@@ -580,7 +626,11 @@ async fn list_secret_version_ids(state: AppState, body: Value) -> Response {
     let name = strip_arn(&secret_id_str).to_string();
     let (path, sname) = name_to_path_name(&name);
 
-    let sv = match state.store.get(state.default_env_id, &path, &sname, None).await {
+    let sv = match state
+        .store
+        .get(state.default_env_id, &path, &sname, None)
+        .await
+    {
         Ok(sv) => sv,
         Err(_) => return not_found(&name),
     };
@@ -599,7 +649,11 @@ async fn list_secret_version_ids(state: AppState, body: Value) -> Response {
     let mut nums: Vec<i32> = all_versions.iter().map(|v| v.version_num).collect();
     nums.sort_unstable();
     let max_num = nums.last().copied().unwrap_or(0);
-    let prev_num = if nums.len() >= 2 { nums[nums.len() - 2] } else { -1 };
+    let prev_num = if nums.len() >= 2 {
+        nums[nums.len() - 2]
+    } else {
+        -1
+    };
 
     let versions: Vec<Value> = all_versions
         .iter()
@@ -644,7 +698,11 @@ async fn describe_secret(state: AppState, body: Value) -> Response {
     let name = strip_arn(&secret_id_str).to_string();
     let (path, sname) = name_to_path_name(&name);
 
-    match state.store.get(state.default_env_id, &path, &sname, None).await {
+    match state
+        .store
+        .get(state.default_env_id, &path, &sname, None)
+        .await
+    {
         Ok(sv) => {
             let version_id = sv.version.id.to_string();
             (
@@ -686,7 +744,11 @@ async fn batch_get_secret_value(state: AppState, body: Value) -> Response {
     for id_str in ids {
         let name = strip_arn(&id_str).to_string();
         let (path, sname) = name_to_path_name(&name);
-        match state.store.get(state.default_env_id, &path, &sname, None).await {
+        match state
+            .store
+            .get(state.default_env_id, &path, &sname, None)
+            .await
+        {
             Ok(sv) => {
                 let version_id = sv.version.id.to_string();
                 let ts = sv.secret.updated_at.timestamp();
@@ -786,7 +848,11 @@ async fn tag_resource(state: AppState, body: Value, adding: bool) -> Response {
     let name = strip_arn(&secret_id_str).to_string();
     let (path, sname) = name_to_path_name(&name);
 
-    let sv = match state.store.get(state.default_env_id, &path, &sname, None).await {
+    let sv = match state
+        .store
+        .get(state.default_env_id, &path, &sname, None)
+        .await
+    {
         Ok(sv) => sv,
         Err(_) => return not_found(&name),
     };
@@ -840,7 +906,11 @@ async fn rotate_secret(state: AppState, body: Value) -> Response {
     let name = strip_arn(&secret_id_str).to_string();
     let (path, sname) = name_to_path_name(&name);
 
-    let sv = match state.store.get(state.default_env_id, &path, &sname, None).await {
+    let sv = match state
+        .store
+        .get(state.default_env_id, &path, &sname, None)
+        .await
+    {
         Ok(sv) => sv,
         Err(_) => return not_found(&name),
     };

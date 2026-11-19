@@ -12,8 +12,8 @@ use opensourcepasswordmanager::{
     db::{
         backend::SecretBackend,
         models::{
-            AuditLog, Namespace, Secret, SecretLabel, SecretMeta, SecretValue, SecretVersion, VaultMount,
-            WriteSecret,
+            AuditLog, Namespace, Secret, SecretLabel, SecretMeta, SecretValue, SecretVersion,
+            VaultMount, WriteSecret,
         },
         DbError, Result as DbResult,
     },
@@ -62,7 +62,10 @@ impl SecretBackend for MemBackend {
             name: input.name.clone(),
             path: input.path.clone(),
             description: input.description.clone(),
-            tags: input.tags.clone().unwrap_or(serde_json::Value::Object(Default::default())),
+            tags: input
+                .tags
+                .clone()
+                .unwrap_or(serde_json::Value::Object(Default::default())),
             created_at: now,
             updated_at: now,
             deleted_at: None,
@@ -127,7 +130,11 @@ impl SecretBackend for MemBackend {
 
     async fn update_secret(&self, secret_id: Uuid, input: WriteSecret) -> DbResult<SecretValue> {
         let mut store = self.inner.lock().unwrap();
-        let key = store.by_id.get(&secret_id).cloned().ok_or(DbError::NotFound)?;
+        let key = store
+            .by_id
+            .get(&secret_id)
+            .cloned()
+            .ok_or(DbError::NotFound)?;
 
         let (secret, versions) = store.secrets.get_mut(&key).ok_or(DbError::NotFound)?;
 
@@ -188,7 +195,11 @@ impl SecretBackend for MemBackend {
 
     async fn get_secret_meta(&self, secret_id: Uuid) -> DbResult<SecretMeta> {
         let store = self.inner.lock().unwrap();
-        let key = store.by_id.get(&secret_id).cloned().ok_or(DbError::NotFound)?;
+        let key = store
+            .by_id
+            .get(&secret_id)
+            .cloned()
+            .ok_or(DbError::NotFound)?;
         let (secret, versions) = store.secrets.get(&key).ok_or(DbError::NotFound)?;
         let current = versions.iter().map(|v| v.version_num).max().unwrap_or(0);
         Ok(SecretMeta {
@@ -205,7 +216,11 @@ impl SecretBackend for MemBackend {
 
     async fn soft_delete_versions(&self, secret_id: Uuid, versions: &[i32]) -> DbResult<()> {
         let mut store = self.inner.lock().unwrap();
-        let key = store.by_id.get(&secret_id).cloned().ok_or(DbError::NotFound)?;
+        let key = store
+            .by_id
+            .get(&secret_id)
+            .cloned()
+            .ok_or(DbError::NotFound)?;
         let (_, vers) = store.secrets.get_mut(&key).ok_or(DbError::NotFound)?;
         let now = Utc::now();
         for v in vers.iter_mut() {
@@ -218,7 +233,11 @@ impl SecretBackend for MemBackend {
 
     async fn undelete_versions(&self, secret_id: Uuid, versions: &[i32]) -> DbResult<()> {
         let mut store = self.inner.lock().unwrap();
-        let key = store.by_id.get(&secret_id).cloned().ok_or(DbError::NotFound)?;
+        let key = store
+            .by_id
+            .get(&secret_id)
+            .cloned()
+            .ok_or(DbError::NotFound)?;
         let (_, vers) = store.secrets.get_mut(&key).ok_or(DbError::NotFound)?;
         for v in vers.iter_mut() {
             if versions.contains(&v.version_num) {
@@ -230,7 +249,11 @@ impl SecretBackend for MemBackend {
 
     async fn destroy_versions(&self, secret_id: Uuid, versions: &[i32]) -> DbResult<()> {
         let mut store = self.inner.lock().unwrap();
-        let key = store.by_id.get(&secret_id).cloned().ok_or(DbError::NotFound)?;
+        let key = store
+            .by_id
+            .get(&secret_id)
+            .cloned()
+            .ok_or(DbError::NotFound)?;
         let (_, vers) = store.secrets.get_mut(&key).ok_or(DbError::NotFound)?;
         let now = Utc::now();
         for v in vers.iter_mut() {
@@ -244,7 +267,11 @@ impl SecretBackend for MemBackend {
 
     async fn delete_secret(&self, secret_id: Uuid) -> DbResult<()> {
         let mut store = self.inner.lock().unwrap();
-        let key = store.by_id.get(&secret_id).cloned().ok_or(DbError::NotFound)?;
+        let key = store
+            .by_id
+            .get(&secret_id)
+            .cloned()
+            .ok_or(DbError::NotFound)?;
         let (secret, _) = store.secrets.get_mut(&key).ok_or(DbError::NotFound)?;
         secret.deleted_at = Some(Utc::now());
         Ok(())
@@ -252,22 +279,39 @@ impl SecretBackend for MemBackend {
 
     async fn update_secret_tags(&self, secret_id: Uuid, tags: serde_json::Value) -> DbResult<()> {
         let mut store = self.inner.lock().unwrap();
-        let key = store.by_id.get(&secret_id).cloned().ok_or(DbError::NotFound)?;
+        let key = store
+            .by_id
+            .get(&secret_id)
+            .cloned()
+            .ok_or(DbError::NotFound)?;
         let (secret, _) = store.secrets.get_mut(&key).ok_or(DbError::NotFound)?;
         secret.tags = tags;
         Ok(())
     }
 
-    async fn update_secret_description(&self, secret_id: Uuid, description: String) -> DbResult<()> {
+    async fn update_secret_description(
+        &self,
+        secret_id: Uuid,
+        description: String,
+    ) -> DbResult<()> {
         let mut store = self.inner.lock().unwrap();
-        let key = store.by_id.get(&secret_id).cloned().ok_or(DbError::NotFound)?;
+        let key = store
+            .by_id
+            .get(&secret_id)
+            .cloned()
+            .ok_or(DbError::NotFound)?;
         let (secret, _) = store.secrets.get_mut(&key).ok_or(DbError::NotFound)?;
         secret.description = Some(description);
         secret.updated_at = Utc::now();
         Ok(())
     }
 
-    async fn restore_secret(&self, environment_id: Uuid, path: &str, name: &str) -> DbResult<SecretMeta> {
+    async fn restore_secret(
+        &self,
+        environment_id: Uuid,
+        path: &str,
+        name: &str,
+    ) -> DbResult<SecretMeta> {
         let mut store = self.inner.lock().unwrap();
         let key = (environment_id, path.to_string(), name.to_string());
         let (secret, versions) = store.secrets.get_mut(&key).ok_or(DbError::NotFound)?;
@@ -295,7 +339,11 @@ impl SecretBackend for MemBackend {
 
     async fn get_versions(&self, secret_id: Uuid) -> DbResult<Vec<SecretVersion>> {
         let store = self.inner.lock().unwrap();
-        let key = store.by_id.get(&secret_id).cloned().ok_or(DbError::NotFound)?;
+        let key = store
+            .by_id
+            .get(&secret_id)
+            .cloned()
+            .ok_or(DbError::NotFound)?;
         let (_, versions) = store.secrets.get(&key).ok_or(DbError::NotFound)?;
         Ok(versions.clone())
     }
@@ -316,9 +364,16 @@ impl SecretBackend for MemBackend {
         Ok(())
     }
 
-    async fn get_vault_mount(&self, org_id: Uuid, namespace: &str, mount_path: &str) -> DbResult<VaultMount> {
+    async fn get_vault_mount(
+        &self,
+        org_id: Uuid,
+        namespace: &str,
+        mount_path: &str,
+    ) -> DbResult<VaultMount> {
         let store = self.inner.lock().unwrap();
-        store.mounts.iter()
+        store
+            .mounts
+            .iter()
             .find(|m| m.org_id == org_id && m.namespace == namespace && m.mount_path == mount_path)
             .cloned()
             .ok_or(DbError::NotFound)
@@ -326,9 +381,12 @@ impl SecretBackend for MemBackend {
 
     async fn list_vault_mounts(&self, org_id: Uuid, namespace: &str) -> DbResult<Vec<VaultMount>> {
         let store = self.inner.lock().unwrap();
-        Ok(store.mounts.iter()
+        Ok(store
+            .mounts
+            .iter()
             .filter(|m| m.org_id == org_id && m.namespace == namespace)
-            .cloned().collect())
+            .cloned()
+            .collect())
     }
 
     async fn upsert_vault_mount(
@@ -340,7 +398,9 @@ impl SecretBackend for MemBackend {
         engine_type: &str,
     ) -> DbResult<VaultMount> {
         let mut store = self.inner.lock().unwrap();
-        store.mounts.retain(|m| !(m.org_id == org_id && m.namespace == namespace && m.mount_path == mount_path));
+        store.mounts.retain(|m| {
+            !(m.org_id == org_id && m.namespace == namespace && m.mount_path == mount_path)
+        });
         let m = VaultMount {
             id: Uuid::new_v4(),
             org_id,
@@ -358,14 +418,27 @@ impl SecretBackend for MemBackend {
     async fn create_namespace(&self, org_id: Uuid, path: &str) -> DbResult<Namespace> {
         let mut store = self.inner.lock().unwrap();
         if let Some((parent, _)) = path.rsplit_once('/') {
-            if !store.namespaces.iter().any(|n| n.org_id == org_id && n.path == parent) {
+            if !store
+                .namespaces
+                .iter()
+                .any(|n| n.org_id == org_id && n.path == parent)
+            {
                 return Err(DbError::NotFound);
             }
         }
-        if store.namespaces.iter().any(|n| n.org_id == org_id && n.path == path) {
+        if store
+            .namespaces
+            .iter()
+            .any(|n| n.org_id == org_id && n.path == path)
+        {
             return Err(DbError::Conflict("namespace already exists".into()));
         }
-        let ns = Namespace { id: Uuid::new_v4(), org_id, path: path.to_string(), created_at: Utc::now() };
+        let ns = Namespace {
+            id: Uuid::new_v4(),
+            org_id,
+            path: path.to_string(),
+            created_at: Utc::now(),
+        };
         store.namespaces.push(ns.clone());
         store.mounts.push(VaultMount {
             id: Uuid::new_v4(),
@@ -382,13 +455,22 @@ impl SecretBackend for MemBackend {
 
     async fn get_namespace(&self, org_id: Uuid, path: &str) -> DbResult<Namespace> {
         let store = self.inner.lock().unwrap();
-        store.namespaces.iter().find(|n| n.org_id == org_id && n.path == path)
-            .cloned().ok_or(DbError::NotFound)
+        store
+            .namespaces
+            .iter()
+            .find(|n| n.org_id == org_id && n.path == path)
+            .cloned()
+            .ok_or(DbError::NotFound)
     }
 
     async fn list_namespaces(&self, org_id: Uuid) -> DbResult<Vec<Namespace>> {
         let store = self.inner.lock().unwrap();
-        let mut v: Vec<_> = store.namespaces.iter().filter(|n| n.org_id == org_id).cloned().collect();
+        let mut v: Vec<_> = store
+            .namespaces
+            .iter()
+            .filter(|n| n.org_id == org_id)
+            .cloned()
+            .collect();
         v.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(v)
     }
@@ -396,23 +478,36 @@ impl SecretBackend for MemBackend {
     async fn delete_namespace(&self, org_id: Uuid, path: &str) -> DbResult<()> {
         let mut store = self.inner.lock().unwrap();
         let prefix = format!("{path}/");
-        if store.namespaces.iter().any(|n| n.org_id == org_id && n.path.starts_with(&prefix)) {
+        if store
+            .namespaces
+            .iter()
+            .any(|n| n.org_id == org_id && n.path.starts_with(&prefix))
+        {
             return Err(DbError::Conflict("namespace has child namespaces".into()));
         }
-        let env_ids: Vec<Uuid> = store.mounts.iter()
+        let env_ids: Vec<Uuid> = store
+            .mounts
+            .iter()
             .filter(|m| m.org_id == org_id && m.namespace == path)
-            .filter_map(|m| m.environment_id).collect();
-        let has_secrets = store.secrets.iter()
+            .filter_map(|m| m.environment_id)
+            .collect();
+        let has_secrets = store
+            .secrets
+            .iter()
             .any(|((env, _, _), (s, _))| env_ids.contains(env) && s.deleted_at.is_none());
         if has_secrets {
             return Err(DbError::Conflict("namespace is not empty".into()));
         }
         let before = store.namespaces.len();
-        store.namespaces.retain(|n| !(n.org_id == org_id && n.path == path));
+        store
+            .namespaces
+            .retain(|n| !(n.org_id == org_id && n.path == path));
         if store.namespaces.len() == before {
             return Err(DbError::NotFound);
         }
-        store.mounts.retain(|m| !(m.org_id == org_id && m.namespace == path));
+        store
+            .mounts
+            .retain(|m| !(m.org_id == org_id && m.namespace == path));
         Ok(())
     }
 }
@@ -430,7 +525,8 @@ pub fn make_app_state() -> opensourcepasswordmanager::api::common::AppState {
     let backend: Arc<dyn SecretBackend> = Arc::new(MemBackend::new());
     let crypto = Arc::new(CryptoEngine::from_env().unwrap());
     let store = Arc::new(SecretStore::new(backend.clone(), crypto));
-    let sessions = Arc::new(opensourcepasswordmanager::auth::SessionService::from_secret("test-jwt-secret"));
+    let sessions =
+        Arc::new(opensourcepasswordmanager::auth::SessionService::from_secret("test-jwt-secret"));
     opensourcepasswordmanager::api::common::AppState {
         store,
         db: backend,
@@ -447,7 +543,8 @@ pub fn make_vault_state() -> opensourcepasswordmanager::api::vault::auth::VaultS
     let backend: Arc<dyn SecretBackend> = Arc::new(MemBackend::new());
     let crypto = Arc::new(CryptoEngine::from_env().unwrap());
     let store = Arc::new(SecretStore::new(backend.clone(), crypto));
-    let sessions = Arc::new(opensourcepasswordmanager::auth::SessionService::from_secret("test-jwt-secret"));
+    let sessions =
+        Arc::new(opensourcepasswordmanager::auth::SessionService::from_secret("test-jwt-secret"));
     opensourcepasswordmanager::api::vault::auth::VaultState {
         store,
         db: backend,
@@ -502,7 +599,10 @@ pub fn authed_req(
         .method(method)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", "AWS4-HMAC-SHA256 Credential=test-token/20240101/us-east-1/secretsmanager/aws4_request")
+        .header(
+            "Authorization",
+            "AWS4-HMAC-SHA256 Credential=test-token/20240101/us-east-1/secretsmanager/aws4_request",
+        )
         .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
         .unwrap()
 }

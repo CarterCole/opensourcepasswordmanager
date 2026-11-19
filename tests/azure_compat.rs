@@ -67,7 +67,10 @@ async fn secret_id_is_url_format() {
         id.starts_with("http://"),
         "id should be a full URL, got: {id}"
     );
-    assert!(id.contains("/myvault/secrets/urltest/"), "id should contain vault path");
+    assert!(
+        id.contains("/myvault/secrets/urltest/"),
+        "id should contain vault path"
+    );
 }
 
 // ── list secrets — no values ──────────────────────────────────────────────────
@@ -93,9 +96,15 @@ async fn list_secrets_no_values() {
 
     // Items must NOT have a "value" field
     for item in items {
-        assert!(item.get("value").is_none(), "list items should not expose value: {item}");
+        assert!(
+            item.get("value").is_none(),
+            "list items should not expose value: {item}"
+        );
         assert!(item["id"].is_string(), "list items should have id");
-        assert!(item["attributes"].is_object(), "list items should have attributes");
+        assert!(
+            item["attributes"].is_object(),
+            "list items should have attributes"
+        );
     }
     assert_eq!(body["nextLink"], serde_json::Value::Null);
 }
@@ -117,9 +126,17 @@ async fn missing_secret_returns_azure_error_shape() {
 async fn api_version_param_is_optional() {
     let app = app();
 
-    let put = az_req("PUT", "/myvault/secrets/noversiontest", json!({ "value": "test" }));
+    let put = az_req(
+        "PUT",
+        "/myvault/secrets/noversiontest",
+        json!({ "value": "test" }),
+    );
     let (status, _) = common::call(app, put).await;
-    assert_eq!(status, StatusCode::OK, "should work without api-version param");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "should work without api-version param"
+    );
 }
 
 // ── delete secret ─────────────────────────────────────────────────────────────
@@ -170,7 +187,10 @@ async fn list_secret_versions() {
     let versions = body["value"].as_array().expect("value should be array");
     // Versions list should have items without value field
     for ver in versions {
-        assert!(ver.get("value").is_none(), "version items should not expose value");
+        assert!(
+            ver.get("value").is_none(),
+            "version items should not expose value"
+        );
         assert!(ver["id"].is_string(), "version items should have id");
     }
 }

@@ -43,7 +43,9 @@ pub fn allows(policies: &[String], path: &str, cap: Capability) -> bool {
 
 /// True if the policy set is root-equivalent (may delegate any policy).
 pub fn is_root(policies: &[String]) -> bool {
-    policies.iter().any(|p| matches!(p.trim(), "root" | "owner" | "admin" | "sudo"))
+    policies
+        .iter()
+        .any(|p| matches!(p.trim(), "root" | "owner" | "admin" | "sudo"))
 }
 
 fn policy_allows(policy: &str, path: &str, cap: Capability) -> bool {
@@ -63,7 +65,10 @@ fn policy_allows(policy: &str, path: &str, cap: Capability) -> bool {
             if glob.is_empty() {
                 return false;
             }
-            let cap_ok = caps.split(',').filter_map(Capability::parse).any(|c| c == cap);
+            let cap_ok = caps
+                .split(',')
+                .filter_map(Capability::parse)
+                .any(|c| c == cap);
             cap_ok && glob_match(glob, path)
         }
     }

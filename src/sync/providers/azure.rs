@@ -124,11 +124,7 @@ impl AzureProvider {
     pub async fn delete_secret(&self, name: &str) -> anyhow::Result<()> {
         let token = self.get_token().await.unwrap_or_else(|_| "dev".to_string());
         let url = format!("{}/secrets/{}?api-version=7.4", self.vault_url(), name);
-        self.client
-            .delete(&url)
-            .bearer_auth(&token)
-            .send()
-            .await?;
+        self.client.delete(&url).bearer_auth(&token).send().await?;
         Ok(())
     }
 }

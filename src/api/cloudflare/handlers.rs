@@ -14,24 +14,36 @@ use crate::api::common::{require_auth, AppState};
 // ── response wrapper ──────────────────────────────────────────────────────────
 
 fn cf_ok(result: Value) -> Response {
-    (StatusCode::OK, Json(json!({
-        "success": true, "errors": [], "messages": [], "result": result,
-    }))).into_response()
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true, "errors": [], "messages": [], "result": result,
+        })),
+    )
+        .into_response()
 }
 
 fn cf_ok_with_info(result: Value, count: usize) -> Response {
-    (StatusCode::OK, Json(json!({
-        "success": true, "errors": [], "messages": [], "result": result,
-        "result_info": { "count": count, "page": 1, "per_page": 25, "total_count": count },
-    }))).into_response()
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true, "errors": [], "messages": [], "result": result,
+            "result_info": { "count": count, "page": 1, "per_page": 25, "total_count": count },
+        })),
+    )
+        .into_response()
 }
 
 fn cf_error(status: StatusCode, code: u32, message: &str) -> Response {
-    (status, Json(json!({
-        "success": false,
-        "errors": [{"code": code, "message": message}],
-        "messages": [], "result": null,
-    }))).into_response()
+    (
+        status,
+        Json(json!({
+            "success": false,
+            "errors": [{"code": code, "message": message}],
+            "messages": [], "result": null,
+        })),
+    )
+        .into_response()
 }
 
 fn cf_forbidden() -> Response {
@@ -64,8 +76,15 @@ pub async fn get_quota(
     Path((_account,)): Path<(String,)>,
     headers: HeaderMap,
 ) -> Response {
-    if require_auth(&state, &headers).await.is_err() { return cf_forbidden(); }
-    let count = state.store.list(state.default_env_id, "/").await.map(|l| l.len()).unwrap_or(0);
+    if require_auth(&state, &headers).await.is_err() {
+        return cf_forbidden();
+    }
+    let count = state
+        .store
+        .list(state.default_env_id, "/")
+        .await
+        .map(|l| l.len())
+        .unwrap_or(0);
     cf_ok(json!({ "count": count, "limit": 10000 }))
 }
 
@@ -76,7 +95,9 @@ pub async fn list_stores(
     Path((_account,)): Path<(String,)>,
     headers: HeaderMap,
 ) -> Response {
-    if require_auth(&state, &headers).await.is_err() { return cf_forbidden(); }
+    if require_auth(&state, &headers).await.is_err() {
+        return cf_forbidden();
+    }
     let store_id = Uuid::new_v4().to_string();
     cf_ok(json!([store_object(&store_id, "default")]))
 }
@@ -87,8 +108,13 @@ pub async fn create_store(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    if require_auth(&state, &headers).await.is_err() { return cf_forbidden(); }
-    let name = body.get("name").and_then(|v| v.as_str()).unwrap_or("default");
+    if require_auth(&state, &headers).await.is_err() {
+        return cf_forbidden();
+    }
+    let name = body
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
     let store_id = Uuid::new_v4().to_string();
     cf_ok(store_object(&store_id, name))
 }
@@ -98,7 +124,9 @@ pub async fn get_store(
     Path((_account, store)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    if require_auth(&state, &headers).await.is_err() { return cf_forbidden(); }
+    if require_auth(&state, &headers).await.is_err() {
+        return cf_forbidden();
+    }
     cf_ok(store_object(&store, "default"))
 }
 
@@ -107,7 +135,9 @@ pub async fn delete_store(
     Path((_account, _store)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    if require_auth(&state, &headers).await.is_err() { return cf_forbidden(); }
+    if require_auth(&state, &headers).await.is_err() {
+        return cf_forbidden();
+    }
     cf_ok(Value::Null)
 }
 
@@ -118,11 +148,16 @@ pub async fn list_store_secrets(
     Path((_account, store)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    if require_auth(&state, &headers).await.is_err() { return cf_forbidden(); }
+    if require_auth(&state, &headers).await.is_err() {
+        return cf_forbidden();
+    }
     let path = cf_path(&store);
     match state.store.list(state.default_env_id, &path).await {
         Ok(secrets) => {
-            let items: Vec<Value> = secrets.iter().map(|s| secret_meta_object(&s.id.to_string(), &s.name, &store)).collect();
+            let items: Vec<Value> = secrets
+                .iter()
+                .map(|s| secret_meta_object(&s.id.to_string(), &s.name, &store))
+                .collect();
             let n = items.len();
             cf_ok_with_info(json!(items), n)
         }
@@ -136,7 +171,9 @@ pub async fn batch_create_secrets(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    if require_auth(&state, &headers).await.is_err() { return cf_forbidden(); }
+    if require_auth(&state, &headers).await.is_err() {
+        return cf_forbidden();
+    }
     let path = cf_path(&store);
 
     let items = match body.as_array() {
@@ -151,7 +188,18 @@ pub async fn batch_create_secrets(
             None => continue,
         };
         let value = item.get("text").and_then(|v| v.as_str()).unwrap_or("");
-        if let Ok(sv) = state.store.put(state.default_env_id, &path, name, value.as_bytes(), "string", None).await {
+        if let Ok(sv) = state
+            .store
+            .put(
+                state.default_env_id,
+                &path,
+                name,
+                value.as_bytes(),
+                "string",
+                None,
+            )
+            .await
+        {
             results.push(secret_meta_object(&sv.secret.id.to_string(), name, &store));
         }
     }
@@ -164,10 +212,20 @@ pub async fn get_store_secret(
     Path((_account, store, secret)): Path<(String, String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    if require_auth(&state, &headers).await.is_err() { return cf_forbidden(); }
+    if require_auth(&state, &headers).await.is_err() {
+        return cf_forbidden();
+    }
     let path = cf_path(&store);
-    match state.store.get(state.default_env_id, &path, &secret, None).await {
-        Ok(sv) => cf_ok(secret_meta_object(&sv.secret.id.to_string(), &secret, &store)),
+    match state
+        .store
+        .get(state.default_env_id, &path, &secret, None)
+        .await
+    {
+        Ok(sv) => cf_ok(secret_meta_object(
+            &sv.secret.id.to_string(),
+            &secret,
+            &store,
+        )),
         Err(_) => cf_error(StatusCode::NOT_FOUND, 7003, "Secret not found"),
     }
 }
@@ -178,12 +236,29 @@ pub async fn update_store_secret(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    if require_auth(&state, &headers).await.is_err() { return cf_forbidden(); }
+    if require_auth(&state, &headers).await.is_err() {
+        return cf_forbidden();
+    }
     let path = cf_path(&store);
-    let name = body.get("name").and_then(|v| v.as_str()).unwrap_or(&secret).to_string();
+    let name = body
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&secret)
+        .to_string();
     let value = body.get("text").and_then(|v| v.as_str()).unwrap_or("");
 
-    match state.store.put(state.default_env_id, &path, &name, value.as_bytes(), "string", None).await {
+    match state
+        .store
+        .put(
+            state.default_env_id,
+            &path,
+            &name,
+            value.as_bytes(),
+            "string",
+            None,
+        )
+        .await
+    {
         Ok(sv) => cf_ok(secret_meta_object(&sv.secret.id.to_string(), &name, &store)),
         Err(e) => cf_error(StatusCode::INTERNAL_SERVER_ERROR, 7000, &e.to_string()),
     }
@@ -194,9 +269,15 @@ pub async fn delete_store_secret(
     Path((_account, store, secret)): Path<(String, String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    if require_auth(&state, &headers).await.is_err() { return cf_forbidden(); }
+    if require_auth(&state, &headers).await.is_err() {
+        return cf_forbidden();
+    }
     let path = cf_path(&store);
-    match state.store.get(state.default_env_id, &path, &secret, None).await {
+    match state
+        .store
+        .get(state.default_env_id, &path, &secret, None)
+        .await
+    {
         Ok(sv) => {
             let _ = state.store.delete(sv.secret.id).await;
             cf_ok(json!({ "id": sv.secret.id.to_string() }))

@@ -63,7 +63,9 @@ impl PasskeyService {
     }
 
     fn engine(&self) -> Result<&Webauthn> {
-        self.webauthn.as_ref().ok_or_else(|| anyhow!("passkeys are not configured"))
+        self.webauthn
+            .as_ref()
+            .ok_or_else(|| anyhow!("passkeys are not configured"))
     }
 
     /// Begin registration for a user. Persist nothing yet; the returned
@@ -76,7 +78,10 @@ impl PasskeyService {
         existing: &[Passkey],
     ) -> Result<CreationChallengeResponse> {
         let webauthn = self.engine()?;
-        let exclude = existing.iter().map(|p| p.cred_id().clone()).collect::<Vec<_>>();
+        let exclude = existing
+            .iter()
+            .map(|p| p.cred_id().clone())
+            .collect::<Vec<_>>();
         let (ccr, state) = webauthn
             .start_passkey_registration(user_id, user_name, display_name, Some(exclude))
             .map_err(|e| anyhow!("start registration: {e}"))?;
@@ -84,7 +89,13 @@ impl PasskeyService {
         reg_store()
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(user_id, Pending { state, created: Instant::now() });
+            .insert(
+                user_id,
+                Pending {
+                    state,
+                    created: Instant::now(),
+                },
+            );
         Ok(ccr)
     }
 
@@ -125,7 +136,13 @@ impl PasskeyService {
         auth_store()
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(key.to_string(), Pending { state, created: Instant::now() });
+            .insert(
+                key.to_string(),
+                Pending {
+                    state,
+                    created: Instant::now(),
+                },
+            );
         Ok(rcr)
     }
 
@@ -176,7 +193,9 @@ mod tests {
     fn disabled_without_config() {
         let svc = PasskeyService::from_config(None, None);
         assert!(!svc.enabled());
-        assert!(svc.start_registration(Uuid::new_v4(), "a", "a", &[]).is_err());
+        assert!(svc
+            .start_registration(Uuid::new_v4(), "a", "a", &[])
+            .is_err());
     }
 
     #[test]

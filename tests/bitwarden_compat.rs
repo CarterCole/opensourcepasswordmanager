@@ -23,14 +23,18 @@ async fn token_endpoint_accepts_form_encoded() {
 
     let (status, body) = common::call(app(), req).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body["access_token"].is_string(), "access_token should be present");
+    assert!(
+        body["access_token"].is_string(),
+        "access_token should be present"
+    );
     assert_eq!(body["token_type"], "Bearer");
     assert_eq!(body["expires_in"], 3600);
 }
 
 #[tokio::test]
 async fn token_endpoint_rejects_empty_client_id() {
-    let body = "grant_type=client_credentials&client_id=&client_secret=test-secret&scope=api.organization";
+    let body =
+        "grant_type=client_credentials&client_id=&client_secret=test-secret&scope=api.organization";
     let req = axum::http::Request::builder()
         .method("POST")
         .uri("/identity/connect/token")
@@ -44,7 +48,8 @@ async fn token_endpoint_rejects_empty_client_id() {
 
 #[tokio::test]
 async fn token_endpoint_rejects_empty_client_secret() {
-    let body = "grant_type=client_credentials&client_id=org.test&client_secret=&scope=api.organization";
+    let body =
+        "grant_type=client_credentials&client_id=org.test&client_secret=&scope=api.organization";
     let req = axum::http::Request::builder()
         .method("POST")
         .uri("/identity/connect/token")

@@ -1,9 +1,9 @@
+use super::handlers;
+use crate::api::common::AppState;
 use axum::{
     routing::{delete, get, post},
     Router,
 };
-use crate::api::common::AppState;
-use super::handlers;
 
 pub fn gcp_router(state: AppState) -> Router {
     Router::new()

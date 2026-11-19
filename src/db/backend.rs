@@ -18,19 +18,11 @@ pub trait SecretBackend: Send + Sync {
 
     async fn update_secret(&self, secret_id: Uuid, input: WriteSecret) -> Result<SecretValue>;
 
-    async fn list_secrets(
-        &self,
-        environment_id: Uuid,
-        path: &str,
-    ) -> Result<Vec<SecretMeta>>;
+    async fn list_secrets(&self, environment_id: Uuid, path: &str) -> Result<Vec<SecretMeta>>;
 
     async fn get_secret_meta(&self, secret_id: Uuid) -> Result<SecretMeta>;
 
-    async fn soft_delete_versions(
-        &self,
-        secret_id: Uuid,
-        versions: &[i32],
-    ) -> Result<()>;
+    async fn soft_delete_versions(&self, secret_id: Uuid, versions: &[i32]) -> Result<()>;
 
     async fn undelete_versions(&self, secret_id: Uuid, versions: &[i32]) -> Result<()>;
 
@@ -40,12 +32,7 @@ pub trait SecretBackend: Send + Sync {
 
     // ── Labels ───────────────────────────────────────────────────────────────
 
-    async fn set_label(
-        &self,
-        secret_id: Uuid,
-        label: &str,
-        version_num: i32,
-    ) -> Result<()>;
+    async fn set_label(&self, secret_id: Uuid, label: &str, version_num: i32) -> Result<()>;
 
     async fn get_versions(&self, secret_id: Uuid) -> Result<Vec<SecretVersion>>;
 
@@ -67,7 +54,12 @@ pub trait SecretBackend: Send + Sync {
 
     // ── Vault mounts ─────────────────────────────────────────────────────────
 
-    async fn get_vault_mount(&self, org_id: Uuid, namespace: &str, mount_path: &str) -> Result<VaultMount>;
+    async fn get_vault_mount(
+        &self,
+        org_id: Uuid,
+        namespace: &str,
+        mount_path: &str,
+    ) -> Result<VaultMount>;
 
     async fn list_vault_mounts(&self, org_id: Uuid, namespace: &str) -> Result<Vec<VaultMount>>;
 

@@ -30,7 +30,7 @@ pub struct CreateKeyRequest {
 pub struct CreatedKey {
     pub id: Uuid,
     pub name: String,
-    pub key: String,  // shown ONCE
+    pub key: String, // shown ONCE
     pub prefix: String,
     pub role: Option<String>,
     pub scopes: Vec<String>,
@@ -53,10 +53,10 @@ pub struct KeyMeta {
 /// Resolve a role name to its UUID from the seed data.
 fn builtin_role_id(role: &str) -> Option<Uuid> {
     match role {
-        "owner"     => Some(Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap()),
-        "admin"     => Some(Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap()),
+        "owner" => Some(Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap()),
+        "admin" => Some(Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap()),
         "developer" => Some(Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap()),
-        "reader"    => Some(Uuid::parse_str("00000000-0000-0000-0000-000000000004").unwrap()),
+        "reader" => Some(Uuid::parse_str("00000000-0000-0000-0000-000000000004").unwrap()),
         _ => None,
     }
 }
@@ -69,15 +69,28 @@ pub async fn create_key(
 ) -> impl IntoResponse {
     let (raw, prefix, hash) = match ApiKeyService::generate() {
         Ok(t) => t,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": e.to_string()})),
+            )
+                .into_response()
+        }
     };
 
     // Use first org for now; multi-org comes with full RBAC
     let org_row = sqlx::query("SELECT id FROM organizations ORDER BY created_at LIMIT 1")
-        .fetch_optional(&s.pool).await;
+        .fetch_optional(&s.pool)
+        .await;
     let org_id: Uuid = match org_row {
         Ok(Some(r)) => r.get("id"),
-        _ => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "no org"}))).into_response(),
+        _ => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "no org"})),
+            )
+                .into_response()
+        }
     };
 
     let role_id = body.role.as_deref().and_then(builtin_role_id);
@@ -103,18 +116,26 @@ pub async fn create_key(
         Ok(r) => {
             let id: Uuid = r.get("id");
             let created_at: DateTime<Utc> = r.get("created_at");
-            (StatusCode::CREATED, Json(json!({
-                "id": id,
-                "name": body.name,
-                "key": raw,
-                "prefix": prefix,
-                "role": body.role,
-                "scopes": scopes,
-                "expires_at": body.expires_at,
-                "created_at": created_at,
-            }))).into_response()
+            (
+                StatusCode::CREATED,
+                Json(json!({
+                    "id": id,
+                    "name": body.name,
+                    "key": raw,
+                    "prefix": prefix,
+                    "role": body.role,
+                    "scopes": scopes,
+                    "expires_at": body.expires_at,
+                    "created_at": created_at,
+                })),
+            )
+                .into_response()
         }
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
@@ -152,27 +173,35 @@ pub async fn list_keys(State(s): State<NativeState>) -> impl IntoResponse {
             }).collect();
             Json(json!({ "keys": keys })).into_response()
         }
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
 // ── DELETE /api/v1/keys/:id ───────────────────────────────────────────────
 
-pub async fn revoke_key(
-    State(s): State<NativeState>,
-    Path(id): Path<Uuid>,
-) -> impl IntoResponse {
-    let result = sqlx::query(
-        "UPDATE api_keys SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL",
-    )
-    .bind(id)
-    .execute(&s.pool)
-    .await;
+pub async fn revoke_key(State(s): State<NativeState>, Path(id): Path<Uuid>) -> impl IntoResponse {
+    let result =
+        sqlx::query("UPDATE api_keys SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL")
+            .bind(id)
+            .execute(&s.pool)
+            .await;
 
     match result {
         Ok(r) if r.rows_affected() == 1 => StatusCode::NO_CONTENT.into_response(),
-        Ok(_) => (StatusCode::NOT_FOUND, Json(json!({"error": "key not found"}))).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+        Ok(_) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "key not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
@@ -180,10 +209,7 @@ pub async fn revoke_key(
 
 /// Resolve a raw `sk_live_...` bearer token against the DB.
 /// Returns the role name if valid.
-pub async fn resolve_api_key(
-    pool: &sqlx::PgPool,
-    raw_key: &str,
-) -> anyhow::Result<ResolvedKey> {
+pub async fn resolve_api_key(pool: &sqlx::PgPool, raw_key: &str) -> anyhow::Result<ResolvedKey> {
     // Fetch candidates by prefix for efficient lookup
     let prefix = &raw_key[..raw_key.len().min(12)];
 
@@ -206,12 +232,19 @@ pub async fn resolve_api_key(
             let pool2 = pool.clone();
             tokio::spawn(async move {
                 let _ = sqlx::query("UPDATE api_keys SET last_used_at = NOW() WHERE id = $1")
-                    .bind(id).execute(&pool2).await;
+                    .bind(id)
+                    .execute(&pool2)
+                    .await;
             });
 
-            let scopes: Vec<String> = row.get::<serde_json::Value, _>("scopes")
+            let scopes: Vec<String> = row
+                .get::<serde_json::Value, _>("scopes")
                 .as_array()
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
 
             return Ok(ResolvedKey {

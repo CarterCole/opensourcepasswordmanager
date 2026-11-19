@@ -19,15 +19,9 @@ impl AwsProvider {
     }
 
     fn endpoint(&self) -> String {
-        self.creds
-            .endpoint_url
-            .clone()
-            .unwrap_or_else(|| {
-                format!(
-                    "https://secretsmanager.{}.amazonaws.com",
-                    self.creds.region
-                )
-            })
+        self.creds.endpoint_url.clone().unwrap_or_else(|| {
+            format!("https://secretsmanager.{}.amazonaws.com", self.creds.region)
+        })
     }
 
     fn auth_header(&self) -> String {
@@ -69,9 +63,13 @@ impl AwsProvider {
                     .get("LastChangedDate")
                     .and_then(|v| v.as_i64())
                     .unwrap_or(0);
-                let last_changed = chrono::DateTime::from_timestamp(ts, 0)
-                    .unwrap_or_else(chrono::Utc::now);
-                Some(RemoteSecret { name, version_id, last_changed })
+                let last_changed =
+                    chrono::DateTime::from_timestamp(ts, 0).unwrap_or_else(chrono::Utc::now);
+                Some(RemoteSecret {
+                    name,
+                    version_id,
+                    last_changed,
+                })
             })
             .collect())
     }

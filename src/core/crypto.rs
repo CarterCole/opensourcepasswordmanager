@@ -3,13 +3,13 @@
 //! `encrypted_dek` blob layout: [12-byte kek_nonce][AES-GCM(kek, dek)]
 //! `encrypted_value` is raw AES-GCM ciphertext; nonce lives in the `nonce` column.
 
+use crate::db::EncryptResult;
 use aes_gcm::{
     aead::{Aead, AeadCore, KeyInit, OsRng},
     Aes256Gcm, Key, Nonce,
 };
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
-use crate::db::EncryptResult;
 use uuid::Uuid;
 
 pub struct CryptoEngine {
@@ -20,10 +20,9 @@ pub struct CryptoEngine {
 impl CryptoEngine {
     /// Load from environment: `SECRETD_KEK_ID` (UUID) and `SECRETD_KEK` (base64, 32 bytes).
     pub fn from_env() -> Result<Self> {
-        let kek_id = Uuid::parse_str(
-            &std::env::var("SECRETD_KEK_ID").context("SECRETD_KEK_ID not set")?,
-        )
-        .context("invalid SECRETD_KEK_ID")?;
+        let kek_id =
+            Uuid::parse_str(&std::env::var("SECRETD_KEK_ID").context("SECRETD_KEK_ID not set")?)
+                .context("invalid SECRETD_KEK_ID")?;
 
         let kek_bytes = B64
             .decode(std::env::var("SECRETD_KEK").context("SECRETD_KEK not set")?)
@@ -121,7 +120,9 @@ impl CryptoEngine {
         let (nonce, ciphertext) = blob.split_at(12);
         Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&self.kek))
             .decrypt(Nonce::from_slice(nonce), ciphertext)
-            .map_err(|_| anyhow::anyhow!("failed to open sealed blob — wrong key or corrupted data"))
+            .map_err(|_| {
+                anyhow::anyhow!("failed to open sealed blob — wrong key or corrupted data")
+            })
     }
 }
 
@@ -140,7 +141,9 @@ mod tests {
     fn roundtrip_short() {
         let e = test_engine();
         let ct = e.encrypt(b"hello world").unwrap();
-        let pt = e.decrypt(&ct.ciphertext, &ct.nonce, &ct.encrypted_dek).unwrap();
+        let pt = e
+            .decrypt(&ct.ciphertext, &ct.nonce, &ct.encrypted_dek)
+            .unwrap();
         assert_eq!(pt, b"hello world");
     }
 
@@ -148,7 +151,9 @@ mod tests {
     fn roundtrip_empty() {
         let e = test_engine();
         let ct = e.encrypt(b"").unwrap();
-        let pt = e.decrypt(&ct.ciphertext, &ct.nonce, &ct.encrypted_dek).unwrap();
+        let pt = e
+            .decrypt(&ct.ciphertext, &ct.nonce, &ct.encrypted_dek)
+            .unwrap();
         assert_eq!(pt, b"");
     }
 
@@ -157,7 +162,9 @@ mod tests {
         let e = test_engine();
         let plaintext = vec![0xABu8; 1024 * 1024]; // 1 MB
         let ct = e.encrypt(&plaintext).unwrap();
-        let pt = e.decrypt(&ct.ciphertext, &ct.nonce, &ct.encrypted_dek).unwrap();
+        let pt = e
+            .decrypt(&ct.ciphertext, &ct.nonce, &ct.encrypted_dek)
+            .unwrap();
         assert_eq!(pt, plaintext);
     }
 
@@ -178,7 +185,10 @@ mod tests {
         let mut tampered = ct.ciphertext.clone();
         tampered[0] ^= 0xFF; // flip bits in the first byte
         let result = e.decrypt(&tampered, &ct.nonce, &ct.encrypted_dek);
-        assert!(result.is_err(), "tampered ciphertext should fail to decrypt");
+        assert!(
+            result.is_err(),
+            "tampered ciphertext should fail to decrypt"
+        );
     }
 
     #[test]

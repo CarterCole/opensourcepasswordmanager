@@ -37,7 +37,11 @@ pub async fn list_users(State(s): State<NativeState>) -> impl IntoResponse {
             })).collect();
             Json(json!({ "users": users })).into_response()
         }
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
@@ -52,8 +56,16 @@ pub async fn deactivate_user(
 
     match result {
         Ok(r) if r.rows_affected() == 1 => StatusCode::NO_CONTENT.into_response(),
-        Ok(_) => (StatusCode::NOT_FOUND, Json(json!({"error": "user not found"}))).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+        Ok(_) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "user not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
@@ -68,16 +80,35 @@ pub async fn assign_role(
 
     let role_id: Uuid = match role_row {
         Ok(Some(r)) => r.get("id"),
-        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({"error": "unknown role"}))).into_response(),
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "unknown role"})),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": e.to_string()})),
+            )
+                .into_response()
+        }
     };
 
     // Scope to the first org for now
     let org_row = sqlx::query("SELECT id FROM organizations ORDER BY created_at LIMIT 1")
-        .fetch_optional(&s.pool).await;
+        .fetch_optional(&s.pool)
+        .await;
     let org_id: Uuid = match org_row {
         Ok(Some(r)) => r.get("id"),
-        _ => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "no org"}))).into_response(),
+        _ => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "no org"})),
+            )
+                .into_response()
+        }
     };
 
     let result = sqlx::query(
@@ -85,11 +116,18 @@ pub async fn assign_role(
          VALUES ($1, $2, 'org', $3)
          ON CONFLICT (user_id, role_id, scope_type, scope_id) DO NOTHING",
     )
-    .bind(user_id).bind(role_id).bind(org_id)
-    .execute(&s.pool).await;
+    .bind(user_id)
+    .bind(role_id)
+    .bind(org_id)
+    .execute(&s.pool)
+    .await;
 
     match result {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }

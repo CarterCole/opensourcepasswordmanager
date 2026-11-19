@@ -17,7 +17,9 @@ pub struct AuthManager {
 }
 
 impl AuthManager {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn register(&mut self, p: impl AuthProvider + 'static) {
         self.providers.insert(p.id().to_string(), Arc::new(p));
@@ -32,7 +34,9 @@ impl AuthManager {
         self.providers.values().map(|p| p.info()).collect()
     }
 
-    pub fn has_any(&self) -> bool { !self.providers.is_empty() }
+    pub fn has_any(&self) -> bool {
+        !self.providers.is_empty()
+    }
 
     pub async fn authenticate(
         &self,

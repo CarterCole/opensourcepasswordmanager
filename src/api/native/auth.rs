@@ -29,7 +29,11 @@ pub async fn login(
     Json(body): Json<LoginRequest>,
 ) -> impl IntoResponse {
     // Throttle online guessing, keyed by provider + login identifier.
-    let identifier = body.credentials.get("email").and_then(|v| v.as_str()).unwrap_or("");
+    let identifier = body
+        .credentials
+        .get("email")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let rl_key = format!("login:{}:{}", body.provider, identifier);
     if let Err(retry) = super::ratelimit::check_and_record(&rl_key) {
         return (
@@ -40,10 +44,18 @@ pub async fn login(
             .into_response();
     }
 
-    let user = match s.auth_manager.authenticate(&body.provider, &body.credentials, &s.pool).await {
+    let user = match s
+        .auth_manager
+        .authenticate(&body.provider, &body.credentials, &s.pool)
+        .await
+    {
         Ok(u) => u,
         Err(e) => {
-            return (StatusCode::UNAUTHORIZED, Json(json!({"error": e.to_string()}))).into_response();
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": e.to_string()})),
+            )
+                .into_response();
         }
     };
     // Successful auth — clear the throttle for this identifier.
@@ -56,7 +68,13 @@ pub async fn login(
             // Auto-provision: insert or upsert the user
             match upsert_user(&s.pool, &user).await {
                 Ok(id) => id,
-                Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({"error": e.to_string()})),
+                    )
+                        .into_response()
+                }
             }
         }
     };
@@ -73,19 +91,31 @@ pub async fn login(
             }))).into_response();
         }
         TotpOutcome::Invalid => {
-            return (StatusCode::UNAUTHORIZED, Json(json!({"error": "invalid_totp"}))).into_response();
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "invalid_totp"})),
+            )
+                .into_response();
         }
         TotpOutcome::Error(e) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))).into_response();
         }
     }
 
-    let roles = fetch_roles(&s.pool, user_id, org_id).await.unwrap_or_default();
-    let token = s.sessions.issue(user_id, org_id, &user.email, roles, true, 86400 * 7);
+    let roles = fetch_roles(&s.pool, user_id, org_id)
+        .await
+        .unwrap_or_default();
+    let token = s
+        .sessions
+        .issue(user_id, org_id, &user.email, roles, true, 86400 * 7);
 
     match token {
         Ok(t) => Json(json!({ "token": t, "token_type": "Bearer" })).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
@@ -114,13 +144,20 @@ async fn enforce_totp(
 
     let enrolled = row
         .try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("totp_enrolled_at")
-        .ok().flatten().is_some();
+        .ok()
+        .flatten()
+        .is_some();
     if !enrolled {
         return TotpOutcome::Ok;
     }
 
-    let code = credentials.get("totp").or_else(|| credentials.get("code"))
-        .and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let code = credentials
+        .get("totp")
+        .or_else(|| credentials.get("code"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
     if code.is_empty() {
         return TotpOutcome::Required;
     }
@@ -137,7 +174,9 @@ async fn enforce_totp(
 
     // Fall back to a one-time backup code.
     let hashes: Vec<String> = row
-        .try_get::<Option<serde_json::Value>, _>("backup_codes_hash").ok().flatten()
+        .try_get::<Option<serde_json::Value>, _>("backup_codes_hash")
+        .ok()
+        .flatten()
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
     if let Some(idx) = crate::auth::BackupCodes::consume(&code, &hashes) {
@@ -145,14 +184,20 @@ async fn enforce_totp(
         remaining.remove(idx);
         let json = serde_json::to_value(&remaining).unwrap_or(json!([]));
         let _ = sqlx::query("UPDATE users SET backup_codes_hash = $1 WHERE id = $2")
-            .bind(json).bind(user_id).execute(&s.pool).await;
+            .bind(json)
+            .bind(user_id)
+            .execute(&s.pool)
+            .await;
         return TotpOutcome::Ok;
     }
 
     TotpOutcome::Invalid
 }
 
-async fn upsert_user(pool: &sqlx::PgPool, user: &crate::auth::provider::AuthUser) -> anyhow::Result<Uuid> {
+async fn upsert_user(
+    pool: &sqlx::PgPool,
+    user: &crate::auth::provider::AuthUser,
+) -> anyhow::Result<Uuid> {
     let row = sqlx::query(
         "INSERT INTO users (org_id, email, display_name) VALUES ($1, $2, $3)
          ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name, updated_at = NOW()
@@ -166,7 +211,11 @@ async fn upsert_user(pool: &sqlx::PgPool, user: &crate::auth::provider::AuthUser
     Ok(row.get("id"))
 }
 
-async fn fetch_roles(pool: &sqlx::PgPool, user_id: Uuid, org_id: Uuid) -> anyhow::Result<Vec<String>> {
+async fn fetch_roles(
+    pool: &sqlx::PgPool,
+    user_id: Uuid,
+    org_id: Uuid,
+) -> anyhow::Result<Vec<String>> {
     let rows = sqlx::query(
         "SELECT r.name FROM roles r
          JOIN role_assignments ra ON ra.role_id = r.id
@@ -214,7 +263,11 @@ pub async fn register(
 ) -> impl IntoResponse {
     // Only allow if email auth is enabled in config
     if !s.config.auth.email {
-        return (StatusCode::NOT_FOUND, Json(json!({"error": "email auth not enabled"}))).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "email auth not enabled"})),
+        )
+            .into_response();
     }
 
     // Throttle registration attempts by email to limit abuse of the endpoint.
@@ -230,16 +283,29 @@ pub async fn register(
 
     let hash = match crate::auth::apikey::ApiKeyService::hash(&body.password) {
         Ok(h) => h,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": e.to_string()})),
+            )
+                .into_response()
+        }
     };
 
     // Use the first org as default
     let org_row = sqlx::query("SELECT id FROM organizations ORDER BY created_at LIMIT 1")
-        .fetch_optional(&s.pool).await;
+        .fetch_optional(&s.pool)
+        .await;
 
     let org_id: Uuid = match org_row {
         Ok(Some(r)) => r.get("id"),
-        _ => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "no org found"}))).into_response(),
+        _ => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "no org found"})),
+            )
+                .into_response()
+        }
     };
 
     // Open registration is a first-user bootstrap ONLY. Once any user exists, the
@@ -251,7 +317,13 @@ pub async fn register(
         .await
     {
         Ok(c) => c,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": e.to_string()})),
+            )
+                .into_response()
+        }
     };
     if user_count > 0 {
         return (
@@ -271,7 +343,8 @@ pub async fn register(
     .bind(&body.email)
     .bind(&body.display_name)
     .bind(&hash)
-    .fetch_optional(&s.pool).await;
+    .fetch_optional(&s.pool)
+    .await;
 
     match row {
         Ok(Some(r)) => {
@@ -282,11 +355,26 @@ pub async fn register(
                  VALUES ($1, '00000000-0000-0000-0000-000000000001', 'org', $2)
                  ON CONFLICT DO NOTHING",
             )
-            .bind(user_id).bind(org_id).execute(&s.pool).await;
+            .bind(user_id)
+            .bind(org_id)
+            .execute(&s.pool)
+            .await;
 
-            (StatusCode::CREATED, Json(json!({ "user_id": user_id, "email": body.email }))).into_response()
+            (
+                StatusCode::CREATED,
+                Json(json!({ "user_id": user_id, "email": body.email })),
+            )
+                .into_response()
         }
-        Ok(None) => (StatusCode::CONFLICT, Json(json!({"error": "email already registered"}))).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+        Ok(None) => (
+            StatusCode::CONFLICT,
+            Json(json!({"error": "email already registered"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }

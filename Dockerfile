@@ -1,8 +1,10 @@
 # ── Build stage ───────────────────────────────────────────────────────────────
 FROM rust:1.90-slim AS builder
 
+# perl (full modules incl. FindBin) and make are needed to build vendored
+# OpenSSL (pulled in by the openssl crate); gcc ships in the rust image.
 RUN apt-get update && apt-get install -y \
-    pkg-config libssl-dev \
+    pkg-config libssl-dev perl make \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

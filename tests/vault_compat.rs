@@ -87,7 +87,10 @@ async fn read_missing_returns_404_with_errors_array() {
     let (status, body) = common::call(app(), req).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     // Vault error shape: {"errors": [...]}
-    assert!(body["errors"].is_array(), "errors should be an array, got: {body}");
+    assert!(
+        body["errors"].is_array(),
+        "errors should be an array, got: {body}"
+    );
 }
 
 // ── list secrets ──────────────────────────────────────────────────────────────
@@ -109,7 +112,9 @@ async fn list_secrets() {
     let list_req = common::json_req("GET", "/secret/metadata/foo?list=true", json!(null));
     let (status, body) = common::call(app, list_req).await;
     assert_eq!(status, StatusCode::OK);
-    let keys = body["data"]["keys"].as_array().expect("keys should be array");
+    let keys = body["data"]["keys"]
+        .as_array()
+        .expect("keys should be array");
     let names: Vec<&str> = keys.iter().filter_map(|v| v.as_str()).collect();
     assert!(names.contains(&"a"), "expected 'a' in keys: {names:?}");
     assert!(names.contains(&"b"), "expected 'b' in keys: {names:?}");
@@ -207,7 +212,10 @@ async fn soft_delete_marks_deletion_time() {
     let deletion_time = body["data"]["metadata"]["deletion_time"]
         .as_str()
         .unwrap_or("");
-    assert!(!deletion_time.is_empty(), "deletion_time should be set after delete");
+    assert!(
+        !deletion_time.is_empty(),
+        "deletion_time should be set after delete"
+    );
 
     // Undelete version 1
     let undelete = common::json_req(
@@ -224,7 +232,10 @@ async fn soft_delete_marks_deletion_time() {
     let dt2 = body2["data"]["metadata"]["deletion_time"]
         .as_str()
         .unwrap_or("");
-    assert!(dt2.is_empty(), "deletion_time should be empty after undelete, got: {dt2}");
+    assert!(
+        dt2.is_empty(),
+        "deletion_time should be empty after undelete, got: {dt2}"
+    );
 }
 
 // ── sys/mounts ────────────────────────────────────────────────────────────────
@@ -240,7 +251,12 @@ async fn sys_mounts_returns_data_object() {
 
 // ── namespaces ────────────────────────────────────────────────────────────────
 
-fn ns_req(method: &str, uri: &str, ns: Option<&str>, body: serde_json::Value) -> axum::http::Request<axum::body::Body> {
+fn ns_req(
+    method: &str,
+    uri: &str,
+    ns: Option<&str>,
+    body: serde_json::Value,
+) -> axum::http::Request<axum::body::Body> {
     let mut b = axum::http::Request::builder()
         .method(method)
         .uri(uri)
@@ -249,11 +265,16 @@ fn ns_req(method: &str, uri: &str, ns: Option<&str>, body: serde_json::Value) ->
     if let Some(ns) = ns {
         b = b.header("X-Vault-Namespace", ns);
     }
-    b.body(axum::body::Body::from(serde_json::to_vec(&body).unwrap())).unwrap()
+    b.body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap()
 }
 
 async fn create_ns(app: &axum::Router, path: &str, ns: Option<&str>) -> StatusCode {
-    let (s, _) = common::call(app.clone(), ns_req("POST", &format!("/sys/namespaces/{path}"), ns, json!({}))).await;
+    let (s, _) = common::call(
+        app.clone(),
+        ns_req("POST", &format!("/sys/namespaces/{path}"), ns, json!({})),
+    )
+    .await;
     s
 }
 
@@ -262,17 +283,33 @@ async fn namespace_create_read_list_delete() {
     let app = app();
     assert_eq!(create_ns(&app, "team-a", None).await, StatusCode::OK);
 
-    let (s, body) = common::call(app.clone(), ns_req("GET", "/sys/namespaces/team-a", None, json!(null))).await;
+    let (s, body) = common::call(
+        app.clone(),
+        ns_req("GET", "/sys/namespaces/team-a", None, json!(null)),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(body["data"]["path"], "team-a/");
 
-    let (s, body) = common::call(app.clone(), ns_req("GET", "/sys/namespaces?list=true", None, json!(null))).await;
+    let (s, body) = common::call(
+        app.clone(),
+        ns_req("GET", "/sys/namespaces?list=true", None, json!(null)),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(body["data"]["keys"], json!(["team-a/"]));
 
-    let (s, _) = common::call(app.clone(), ns_req("DELETE", "/sys/namespaces/team-a", None, json!(null))).await;
+    let (s, _) = common::call(
+        app.clone(),
+        ns_req("DELETE", "/sys/namespaces/team-a", None, json!(null)),
+    )
+    .await;
     assert_eq!(s, StatusCode::NO_CONTENT);
-    let (s, _) = common::call(app.clone(), ns_req("GET", "/sys/namespaces/team-a", None, json!(null))).await;
+    let (s, _) = common::call(
+        app.clone(),
+        ns_req("GET", "/sys/namespaces/team-a", None, json!(null)),
+    )
+    .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
 
@@ -280,7 +317,10 @@ async fn namespace_create_read_list_delete() {
 async fn namespace_rejects_reserved_and_duplicate_and_orphan() {
     let app = app();
     assert_eq!(create_ns(&app, "sys", None).await, StatusCode::BAD_REQUEST);
-    assert_eq!(create_ns(&app, "bad%20name", None).await, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        create_ns(&app, "bad%20name", None).await,
+        StatusCode::BAD_REQUEST
+    );
     assert_eq!(create_ns(&app, "a", None).await, StatusCode::OK);
     assert_eq!(create_ns(&app, "a", None).await, StatusCode::BAD_REQUEST);
     // parent "x" doesn't exist
@@ -293,17 +333,34 @@ async fn namespace_secrets_are_isolated_via_header() {
     create_ns(&app, "team-a", None).await;
     create_ns(&app, "team-b", None).await;
 
-    let w = ns_req("POST", "/secret/data/db", Some("team-a"), json!({"data": {"pw": "a-secret"}}));
+    let w = ns_req(
+        "POST",
+        "/secret/data/db",
+        Some("team-a"),
+        json!({"data": {"pw": "a-secret"}}),
+    );
     assert_eq!(common::call(app.clone(), w).await.0, StatusCode::OK);
 
-    let (s, body) = common::call(app.clone(), ns_req("GET", "/secret/data/db", Some("team-a"), json!(null))).await;
+    let (s, body) = common::call(
+        app.clone(),
+        ns_req("GET", "/secret/data/db", Some("team-a"), json!(null)),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(body["data"]["data"]["pw"], "a-secret");
 
     // Not visible from a sibling namespace or from root.
-    let (s, _) = common::call(app.clone(), ns_req("GET", "/secret/data/db", Some("team-b"), json!(null))).await;
+    let (s, _) = common::call(
+        app.clone(),
+        ns_req("GET", "/secret/data/db", Some("team-b"), json!(null)),
+    )
+    .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
-    let (s, _) = common::call(app.clone(), ns_req("GET", "/secret/data/db", None, json!(null))).await;
+    let (s, _) = common::call(
+        app.clone(),
+        ns_req("GET", "/secret/data/db", None, json!(null)),
+    )
+    .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
 
@@ -311,9 +368,18 @@ async fn namespace_secrets_are_isolated_via_header() {
 async fn namespace_via_path_prefix_matches_header() {
     let app = app();
     create_ns(&app, "team-a", None).await;
-    let w = ns_req("POST", "/team-a/secret/data/db", None, json!({"data": {"pw": "x"}}));
+    let w = ns_req(
+        "POST",
+        "/team-a/secret/data/db",
+        None,
+        json!({"data": {"pw": "x"}}),
+    );
     assert_eq!(common::call(app.clone(), w).await.0, StatusCode::OK);
-    let (s, body) = common::call(app.clone(), ns_req("GET", "/secret/data/db", Some("team-a"), json!(null))).await;
+    let (s, body) = common::call(
+        app.clone(),
+        ns_req("GET", "/secret/data/db", Some("team-a"), json!(null)),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(body["data"]["data"]["pw"], "x");
 }
@@ -323,21 +389,50 @@ async fn nested_namespaces_and_relative_creation() {
     let app = app();
     create_ns(&app, "team-a", None).await;
     // created relative to the header namespace
-    assert_eq!(create_ns(&app, "prod", Some("team-a")).await, StatusCode::OK);
+    assert_eq!(
+        create_ns(&app, "prod", Some("team-a")).await,
+        StatusCode::OK
+    );
     // and via path prefix
-    let (s, _) = common::call(app.clone(), ns_req("POST", "/team-a/sys/namespaces/staging", None, json!({}))).await;
+    let (s, _) = common::call(
+        app.clone(),
+        ns_req("POST", "/team-a/sys/namespaces/staging", None, json!({})),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
 
-    let w = ns_req("POST", "/team-a/prod/secret/data/k", None, json!({"data": {"v": "1"}}));
+    let w = ns_req(
+        "POST",
+        "/team-a/prod/secret/data/k",
+        None,
+        json!({"data": {"v": "1"}}),
+    );
     assert_eq!(common::call(app.clone(), w).await.0, StatusCode::OK);
-    let (s, _) = common::call(app.clone(), ns_req("GET", "/secret/data/k", Some("team-a/prod"), json!(null))).await;
+    let (s, _) = common::call(
+        app.clone(),
+        ns_req("GET", "/secret/data/k", Some("team-a/prod"), json!(null)),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
 
     // parent can't be deleted while it has children; child can
-    let (s, _) = common::call(app.clone(), ns_req("DELETE", "/sys/namespaces/team-a", None, json!(null))).await;
+    let (s, _) = common::call(
+        app.clone(),
+        ns_req("DELETE", "/sys/namespaces/team-a", None, json!(null)),
+    )
+    .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 
-    let (s, body) = common::call(app.clone(), ns_req("GET", "/sys/namespaces?list=true", Some("team-a"), json!(null))).await;
+    let (s, body) = common::call(
+        app.clone(),
+        ns_req(
+            "GET",
+            "/sys/namespaces?list=true",
+            Some("team-a"),
+            json!(null),
+        ),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(body["data"]["keys"], json!(["prod/", "staging/"]));
 }
@@ -346,14 +441,31 @@ async fn nested_namespaces_and_relative_creation() {
 async fn nonempty_namespace_cannot_be_deleted() {
     let app = app();
     create_ns(&app, "team-a", None).await;
-    common::call(app.clone(), ns_req("POST", "/secret/data/k", Some("team-a"), json!({"data": {"v": "1"}}))).await;
-    let (s, _) = common::call(app.clone(), ns_req("DELETE", "/sys/namespaces/team-a", None, json!(null))).await;
+    common::call(
+        app.clone(),
+        ns_req(
+            "POST",
+            "/secret/data/k",
+            Some("team-a"),
+            json!({"data": {"v": "1"}}),
+        ),
+    )
+    .await;
+    let (s, _) = common::call(
+        app.clone(),
+        ns_req("DELETE", "/sys/namespaces/team-a", None, json!(null)),
+    )
+    .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
 async fn unknown_namespace_header_is_404() {
-    let (s, _) = common::call(app(), ns_req("GET", "/secret/data/x", Some("nope"), json!(null))).await;
+    let (s, _) = common::call(
+        app(),
+        ns_req("GET", "/secret/data/x", Some("nope"), json!(null)),
+    )
+    .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
 
@@ -363,30 +475,55 @@ async fn child_token_is_confined_to_its_namespace() {
     create_ns(&app, "team-a", None).await;
     create_ns(&app, "team-b", None).await;
 
-    let (s, body) = common::call(app.clone(), ns_req("POST", "/auth/token/create", Some("team-a"), json!({}))).await;
+    let (s, body) = common::call(
+        app.clone(),
+        ns_req("POST", "/auth/token/create", Some("team-a"), json!({})),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
     let tok = body["auth"]["client_token"].as_str().unwrap().to_string();
 
     let with_tok = |ns: &str| {
         axum::http::Request::builder()
-            .method("GET").uri("/secret/data/none")
-            .header("X-Vault-Token", &tok).header("X-Vault-Namespace", ns)
-            .body(axum::body::Body::empty()).unwrap()
+            .method("GET")
+            .uri("/secret/data/none")
+            .header("X-Vault-Token", &tok)
+            .header("X-Vault-Namespace", ns)
+            .body(axum::body::Body::empty())
+            .unwrap()
     };
     // allowed in own namespace (404 = secret absent, not forbidden)
-    assert_eq!(common::call(app.clone(), with_tok("team-a")).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(
+        common::call(app.clone(), with_tok("team-a")).await.0,
+        StatusCode::NOT_FOUND
+    );
     // forbidden in sibling and in root
-    assert_eq!(common::call(app.clone(), with_tok("team-b")).await.0, StatusCode::FORBIDDEN);
-    assert_eq!(common::call(app.clone(), with_tok("")).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(
+        common::call(app.clone(), with_tok("team-b")).await.0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        common::call(app.clone(), with_tok("")).await.0,
+        StatusCode::FORBIDDEN
+    );
 }
 
 #[tokio::test]
 async fn namespace_works_when_nested_under_v1() {
     let app = axum::Router::new().nest("/v1", app());
     create_ns_at(&app, "/v1/sys/namespaces/team-a").await;
-    let w = ns_req("POST", "/v1/team-a/secret/data/db", None, json!({"data": {"pw": "x"}}));
+    let w = ns_req(
+        "POST",
+        "/v1/team-a/secret/data/db",
+        None,
+        json!({"data": {"pw": "x"}}),
+    );
     assert_eq!(common::call(app.clone(), w).await.0, StatusCode::OK);
-    let (s, _) = common::call(app.clone(), ns_req("GET", "/v1/secret/data/db", Some("team-a"), json!(null))).await;
+    let (s, _) = common::call(
+        app.clone(),
+        ns_req("GET", "/v1/secret/data/db", Some("team-a"), json!(null)),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
     let (s, _) = common::call(app, ns_req("GET", "/v1/secret/data/db", None, json!(null))).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
@@ -405,7 +542,9 @@ async fn cookie_login_accepts_valid_token() {
         .method("POST")
         .uri("/auth/cookie/login")
         .header("Content-Type", "application/json")
-        .body(axum::body::Body::from(serde_json::to_vec(&json!({"token": "test-token"})).unwrap()))
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&json!({"token": "test-token"})).unwrap(),
+        ))
         .unwrap();
     let (status, body) = common::call(app(), req).await;
     assert_eq!(status, StatusCode::OK);
@@ -418,7 +557,9 @@ async fn cookie_login_rejects_invalid_token() {
         .method("POST")
         .uri("/auth/cookie/login")
         .header("Content-Type", "application/json")
-        .body(axum::body::Body::from(serde_json::to_vec(&json!({"token": "not-a-real-token"})).unwrap()))
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&json!({"token": "not-a-real-token"})).unwrap(),
+        ))
         .unwrap();
     let (status, _body) = common::call(app(), req).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -458,23 +599,33 @@ async fn reader_child_token_cannot_write_but_can_read() {
     // Root (dev) token mints a read-only child token.
     let (s, body) = common::call(
         app.clone(),
-        ns_req("POST", "/auth/token/create", None, json!({"policies": ["reader"]})),
-    ).await;
+        ns_req(
+            "POST",
+            "/auth/token/create",
+            None,
+            json!({"policies": ["reader"]}),
+        ),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
     let tok = body["auth"]["client_token"].as_str().unwrap().to_string();
 
     // Write is denied by policy.
     let w = axum::http::Request::builder()
-        .method("POST").uri("/secret/data/app/db")
+        .method("POST")
+        .uri("/secret/data/app/db")
         .header("X-Vault-Token", &tok)
         .header("Content-Type", "application/json")
-        .body(axum::body::Body::from(serde_json::to_vec(&json!({"data": {"pw": "x"}})).unwrap()))
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&json!({"data": {"pw": "x"}})).unwrap(),
+        ))
         .unwrap();
     assert_eq!(common::call(app.clone(), w).await.0, StatusCode::FORBIDDEN);
 
     // Read is allowed by policy (404 because the secret is absent, not 403).
     let r = axum::http::Request::builder()
-        .method("GET").uri("/secret/data/app/db")
+        .method("GET")
+        .uri("/secret/data/app/db")
         .header("X-Vault-Token", &tok)
         .body(axum::body::Body::empty())
         .unwrap();
@@ -488,25 +639,37 @@ async fn child_token_cannot_escalate_policies() {
     // filtered down (no escalation), so the child still cannot write.
     let (_s, body) = common::call(
         app.clone(),
-        ns_req("POST", "/auth/token/create", None, json!({"policies": ["reader"]})),
-    ).await;
+        ns_req(
+            "POST",
+            "/auth/token/create",
+            None,
+            json!({"policies": ["reader"]}),
+        ),
+    )
+    .await;
     let reader = body["auth"]["client_token"].as_str().unwrap().to_string();
 
     let esc = axum::http::Request::builder()
-        .method("POST").uri("/auth/token/create")
+        .method("POST")
+        .uri("/auth/token/create")
         .header("X-Vault-Token", &reader)
         .header("Content-Type", "application/json")
-        .body(axum::body::Body::from(serde_json::to_vec(&json!({"policies": ["root"]})).unwrap()))
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&json!({"policies": ["root"]})).unwrap(),
+        ))
         .unwrap();
     let (_s, body2) = common::call(app.clone(), esc).await;
     let child = body2["auth"]["client_token"].as_str().unwrap().to_string();
 
     // The escalated child still cannot write.
     let w = axum::http::Request::builder()
-        .method("POST").uri("/secret/data/x")
+        .method("POST")
+        .uri("/secret/data/x")
         .header("X-Vault-Token", &child)
         .header("Content-Type", "application/json")
-        .body(axum::body::Body::from(serde_json::to_vec(&json!({"data": {"a": "b"}})).unwrap()))
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&json!({"data": {"a": "b"}})).unwrap(),
+        ))
         .unwrap();
     assert_eq!(common::call(app, w).await.0, StatusCode::FORBIDDEN);
 }

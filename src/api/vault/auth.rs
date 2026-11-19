@@ -1,4 +1,5 @@
 //! Vault token authentication middleware.
+use crate::db::ApiKey;
 use axum::{
     extract::{Request, State},
     http::{header::SET_COOKIE, HeaderMap, HeaderValue, StatusCode},
@@ -10,7 +11,6 @@ use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
-use crate::db::ApiKey;
 
 /// Claims extracted from a valid Vault token
 #[derive(Clone, Debug)]
@@ -98,7 +98,11 @@ pub async fn authenticate_token(state: &VaultState, token: &str) -> Option<Vault
     // roles/policies claim governs what it can do.
     if let Ok(jwt) = state.sessions.validate(token) {
         if let Ok(org_id) = Uuid::parse_str(&jwt.org) {
-            let policies = if jwt.roles.is_empty() { vec!["default".to_string()] } else { jwt.roles.clone() };
+            let policies = if jwt.roles.is_empty() {
+                vec!["default".to_string()]
+            } else {
+                jwt.roles.clone()
+            };
             return Some(VaultClaims {
                 token: token.to_string(),
                 org_id,
@@ -113,7 +117,10 @@ pub async fn authenticate_token(state: &VaultState, token: &str) -> Option<Vault
     // API key (Postgres only) — the key's role becomes its policy.
     if let Some(ref pool) = state.pg_pool {
         if let Ok(resolved) = crate::api::native::keys::resolve_api_key(pool, token).await {
-            let policies = vec![resolved.role.clone().unwrap_or_else(|| "default".to_string())];
+            let policies = vec![resolved
+                .role
+                .clone()
+                .unwrap_or_else(|| "default".to_string())];
             return Some(VaultClaims {
                 token: token.to_string(),
                 org_id: resolved.org_id,
@@ -173,7 +180,8 @@ fn request_is_https(headers: &HeaderMap) -> bool {
 fn session_cookie(token: &str, max_age: u32, secure: bool) -> Option<HeaderValue> {
     // HttpOnly: unreadable by JS (defeats XSS token theft).
     // SameSite=Strict: never sent on cross-site requests (CSRF defence).
-    let mut c = format!("{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}");
+    let mut c =
+        format!("{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}");
     if secure {
         c.push_str("; Secure");
     }
@@ -190,10 +198,16 @@ pub async fn cookie_login(
 ) -> Response {
     let token = body.token.trim();
     if authenticate_token(&state, token).await.is_none() {
-        return crate::api::vault::error::VaultError::resp(StatusCode::UNAUTHORIZED, "invalid token");
+        return crate::api::vault::error::VaultError::resp(
+            StatusCode::UNAUTHORIZED,
+            "invalid token",
+        );
     }
     let Some(cookie) = session_cookie(token, 604800, request_is_https(&headers)) else {
-        return crate::api::vault::error::VaultError::resp(StatusCode::BAD_REQUEST, "token not storable in a cookie");
+        return crate::api::vault::error::VaultError::resp(
+            StatusCode::BAD_REQUEST,
+            "token not storable in a cookie",
+        );
     };
     let mut resp = Json(json!({ "ok": true })).into_response();
     resp.headers_mut().insert(SET_COOKIE, cookie);
@@ -224,7 +238,11 @@ pub async fn enforce_policy(req: Request, next: Next) -> Response {
 
     let method = req.method().as_str().to_string();
     let path = req.uri().path().to_string();
-    let is_list = req.uri().query().map(|q| q.contains("list=true")).unwrap_or(false);
+    let is_list = req
+        .uri()
+        .query()
+        .map(|q| q.contains("list=true"))
+        .unwrap_or(false);
     let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
     if segs.len() >= 2 {
@@ -241,7 +259,11 @@ pub async fn enforce_policy(req: Request, next: Next) -> Response {
             ("undelete", "POST") => Some(Capability::Update),
             ("destroy", "PUT") | ("destroy", "POST") => Some(Capability::Destroy),
             ("metadata", "GET") => {
-                if is_list || rest.is_empty() { Some(Capability::List) } else { Some(Capability::Read) }
+                if is_list || rest.is_empty() {
+                    Some(Capability::List)
+                } else {
+                    Some(Capability::Read)
+                }
             }
             ("metadata", "POST") | ("metadata", "PUT") => Some(Capability::Read),
             ("metadata", "DELETE") => Some(Capability::Delete),
@@ -268,11 +290,18 @@ pub const RESERVED_NS_NAMES: &[&str] = &["sys", "auth", "identity", "cubbyhole"]
 
 /// Normalise a namespace path: trim slashes, collapse empty segments.
 pub fn normalize_ns(raw: &str) -> String {
-    raw.split('/').filter(|s| !s.is_empty()).collect::<Vec<_>>().join("/")
+    raw.split('/')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 pub fn join_ns(base: &str, child: &str) -> String {
-    if base.is_empty() { child.to_string() } else { format!("{base}/{child}") }
+    if base.is_empty() {
+        child.to_string()
+    } else {
+        format!("{base}/{child}")
+    }
 }
 
 /// True if `token_ns` is `ns` itself or one of its ancestors.
@@ -300,7 +329,10 @@ pub async fn resolve_namespace(
         .map(normalize_ns)
         .unwrap_or_default();
     if !ns.is_empty() && state.db.get_namespace(claims.org_id, &ns).await.is_err() {
-        return crate::api::vault::error::VaultError::resp(StatusCode::NOT_FOUND, "namespace not found");
+        return crate::api::vault::error::VaultError::resp(
+            StatusCode::NOT_FOUND,
+            "namespace not found",
+        );
     }
 
     // Descend through leading path segments that name existing child namespaces,
@@ -338,7 +370,10 @@ pub async fn resolve_namespace(
     }
 
     if !ns_allows(&claims.token_ns, &ns) {
-        return crate::api::vault::error::VaultError::resp(StatusCode::FORBIDDEN, "permission denied");
+        return crate::api::vault::error::VaultError::resp(
+            StatusCode::FORBIDDEN,
+            "permission denied",
+        );
     }
     claims.namespace = ns;
     req.extensions_mut().insert(claims);

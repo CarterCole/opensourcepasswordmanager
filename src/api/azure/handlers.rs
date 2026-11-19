@@ -18,15 +18,26 @@ fn azure_error(code: &str, message: &str) -> Response {
         "BadParameter" => StatusCode::BAD_REQUEST,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
-    (status, Json(json!({ "error": { "code": code, "message": message } }))).into_response()
+    (
+        status,
+        Json(json!({ "error": { "code": code, "message": message } })),
+    )
+        .into_response()
 }
 
 fn unauthorized() -> Response {
-    (StatusCode::UNAUTHORIZED, Json(json!({ "error": { "code": "Unauthorized", "message": "Not authorized" } }))).into_response()
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(json!({ "error": { "code": "Unauthorized", "message": "Not authorized" } })),
+    )
+        .into_response()
 }
 
 fn not_found(name: &str) -> Response {
-    azure_error("SecretNotFound", &format!("A secret with (name/id) {name} was not found in this key vault."))
+    azure_error(
+        "SecretNotFound",
+        &format!("A secret with (name/id) {name} was not found in this key vault."),
+    )
 }
 
 fn ts_now() -> i64 {
@@ -58,15 +69,32 @@ pub async fn set_secret(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    if require_auth(&state, &headers).await.is_err() { return unauthorized(); }
+    if require_auth(&state, &headers).await.is_err() {
+        return unauthorized();
+    }
 
     let value = body.get("value").and_then(|v| v.as_str()).unwrap_or("");
 
-    match state.store.put(state.default_env_id, "/", &name, value.as_bytes(), "string", None).await {
+    match state
+        .store
+        .put(
+            state.default_env_id,
+            "/",
+            &name,
+            value.as_bytes(),
+            "string",
+            None,
+        )
+        .await
+    {
         Ok(sv) => {
             let ts = sv.secret.updated_at.timestamp();
             let vid = sv.version.id.to_string();
-            (StatusCode::OK, Json(build_bundle(&vault, &name, value, &vid, ts))).into_response()
+            (
+                StatusCode::OK,
+                Json(build_bundle(&vault, &name, value, &vid, ts)),
+            )
+                .into_response()
         }
         Err(e) => azure_error("InternalError", &e.to_string()),
     }
@@ -79,14 +107,24 @@ pub async fn get_secret(
     Path((vault, name)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    if require_auth(&state, &headers).await.is_err() { return unauthorized(); }
+    if require_auth(&state, &headers).await.is_err() {
+        return unauthorized();
+    }
 
-    match state.store.get(state.default_env_id, "/", &name, None).await {
+    match state
+        .store
+        .get(state.default_env_id, "/", &name, None)
+        .await
+    {
         Ok(sv) => {
             let value = String::from_utf8_lossy(&sv.plaintext).to_string();
             let ts = sv.secret.updated_at.timestamp();
             let vid = sv.version.id.to_string();
-            (StatusCode::OK, Json(build_bundle(&vault, &name, &value, &vid, ts))).into_response()
+            (
+                StatusCode::OK,
+                Json(build_bundle(&vault, &name, &value, &vid, ts)),
+            )
+                .into_response()
         }
         Err(_) => not_found(&name),
     }
@@ -99,13 +137,23 @@ pub async fn get_secret_version(
     Path((vault, name, version)): Path<(String, String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    if require_auth(&state, &headers).await.is_err() { return unauthorized(); }
+    if require_auth(&state, &headers).await.is_err() {
+        return unauthorized();
+    }
 
-    match state.store.get(state.default_env_id, "/", &name, None).await {
+    match state
+        .store
+        .get(state.default_env_id, "/", &name, None)
+        .await
+    {
         Ok(sv) => {
             let value = String::from_utf8_lossy(&sv.plaintext).to_string();
             let ts = sv.secret.updated_at.timestamp();
-            (StatusCode::OK, Json(build_bundle(&vault, &name, &value, &version, ts))).into_response()
+            (
+                StatusCode::OK,
+                Json(build_bundle(&vault, &name, &value, &version, ts)),
+            )
+                .into_response()
         }
         Err(_) => not_found(&name),
     }
@@ -118,9 +166,15 @@ pub async fn delete_secret(
     Path((vault, name)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    if require_auth(&state, &headers).await.is_err() { return unauthorized(); }
+    if require_auth(&state, &headers).await.is_err() {
+        return unauthorized();
+    }
 
-    match state.store.get(state.default_env_id, "/", &name, None).await {
+    match state
+        .store
+        .get(state.default_env_id, "/", &name, None)
+        .await
+    {
         Ok(sv) => {
             let ts = sv.secret.updated_at.timestamp();
             let vid = sv.version.id.to_string();
@@ -149,20 +203,31 @@ pub async fn list_secrets(
     Path(vault): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    if require_auth(&state, &headers).await.is_err() { return unauthorized(); }
+    if require_auth(&state, &headers).await.is_err() {
+        return unauthorized();
+    }
 
     match state.store.list(state.default_env_id, "/").await {
         Ok(secrets) => {
-            let items: Vec<Value> = secrets.iter().map(|s| json!({
-                "id": format!("http://localhost/azure/{}/secrets/{}", vault, s.name),
-                "attributes": {
-                    "enabled": s.deleted_at.is_none(),
-                    "created": s.created_at.timestamp(),
-                    "updated": s.updated_at.timestamp(),
-                    "recoveryLevel": "Purgeable",
-                },
-            })).collect();
-            (StatusCode::OK, Json(json!({ "value": items, "nextLink": null }))).into_response()
+            let items: Vec<Value> = secrets
+                .iter()
+                .map(|s| {
+                    json!({
+                        "id": format!("http://localhost/azure/{}/secrets/{}", vault, s.name),
+                        "attributes": {
+                            "enabled": s.deleted_at.is_none(),
+                            "created": s.created_at.timestamp(),
+                            "updated": s.updated_at.timestamp(),
+                            "recoveryLevel": "Purgeable",
+                        },
+                    })
+                })
+                .collect();
+            (
+                StatusCode::OK,
+                Json(json!({ "value": items, "nextLink": null })),
+            )
+                .into_response()
         }
         Err(e) => azure_error("InternalError", &e.to_string()),
     }
@@ -175,9 +240,15 @@ pub async fn list_versions(
     Path((vault, name)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    if require_auth(&state, &headers).await.is_err() { return unauthorized(); }
+    if require_auth(&state, &headers).await.is_err() {
+        return unauthorized();
+    }
 
-    match state.store.get(state.default_env_id, "/", &name, None).await {
+    match state
+        .store
+        .get(state.default_env_id, "/", &name, None)
+        .await
+    {
         Ok(sv) => {
             let vid = sv.version.id.to_string();
             let ts = sv.secret.updated_at.timestamp();
@@ -187,7 +258,11 @@ pub async fn list_versions(
                     "enabled": true, "created": ts, "updated": ts, "recoveryLevel": "Purgeable",
                 },
             })];
-            (StatusCode::OK, Json(json!({ "value": items, "nextLink": null }))).into_response()
+            (
+                StatusCode::OK,
+                Json(json!({ "value": items, "nextLink": null })),
+            )
+                .into_response()
         }
         Err(_) => not_found(&name),
     }
@@ -196,11 +271,17 @@ pub async fn list_versions(
 // ── deleted secret endpoints ──────────────────────────────────────────────────
 
 pub async fn get_deleted(Path((_vault, name)): Path<(String, String)>) -> Response {
-    azure_error("SecretNotFound", &format!("Deleted secret {name} was not found."))
+    azure_error(
+        "SecretNotFound",
+        &format!("Deleted secret {name} was not found."),
+    )
 }
 
 pub async fn recover_secret(Path((_vault, name)): Path<(String, String)>) -> Response {
-    azure_error("SecretNotFound", &format!("Deleted secret {name} was not found."))
+    azure_error(
+        "SecretNotFound",
+        &format!("Deleted secret {name} was not found."),
+    )
 }
 
 pub async fn purge_secret(Path((_vault, _name)): Path<(String, String)>) -> Response {

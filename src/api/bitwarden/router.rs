@@ -1,9 +1,9 @@
+use super::handlers;
+use crate::api::common::AppState;
 use axum::{
     routing::{delete, get, post, put},
     Router,
 };
-use crate::api::common::AppState;
-use super::handlers;
 
 pub fn bitwarden_router(state: AppState) -> Router {
     Router::new()
@@ -23,6 +23,9 @@ pub fn bitwarden_router(state: AppState) -> Router {
         .route("/api/public/members", get(handlers::list_members))
         .route("/api/public/events", get(handlers::list_events))
         .route("/api/public/policies", get(handlers::list_policies))
-        .route("/api/public/policies/:policy_type", get(handlers::get_policy))
+        .route(
+            "/api/public/policies/:policy_type",
+            get(handlers::get_policy),
+        )
         .with_state(state)
 }

@@ -1,5 +1,5 @@
 //! SQLite backend — full implementation for zero-dependency local/demo use.
-use crate::db::{DbError, EncryptResult, Result, SecretBackend, models::*};
+use crate::db::{models::*, DbError, EncryptResult, Result, SecretBackend};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{Pool, Row, Sqlite};
@@ -45,14 +45,21 @@ fn ts(s: &str) -> DateTime<Utc> {
         .unwrap_or_else(|_| Utc::now())
 }
 
-fn now() -> String { Utc::now().to_rfc3339() }
+fn now() -> String {
+    Utc::now().to_rfc3339()
+}
 
 fn get_ts(row: &sqlx::sqlite::SqliteRow, col: &str) -> DateTime<Utc> {
-    row.try_get::<String, _>(col).map(|s| ts(&s)).unwrap_or_else(|_| Utc::now())
+    row.try_get::<String, _>(col)
+        .map(|s| ts(&s))
+        .unwrap_or_else(|_| Utc::now())
 }
 
 fn get_opt_ts(row: &sqlx::sqlite::SqliteRow, col: &str) -> Option<DateTime<Utc>> {
-    row.try_get::<Option<String>, _>(col).ok().flatten().map(|s| ts(&s))
+    row.try_get::<Option<String>, _>(col)
+        .ok()
+        .flatten()
+        .map(|s| ts(&s))
 }
 
 fn parse_uuid(row: &sqlx::sqlite::SqliteRow, col: &str) -> Result<Uuid> {
@@ -94,10 +101,16 @@ impl SecretBackend for SqliteBackend {
              (id, secret_id, version_num, dek_id, encrypted_value, nonce, value_type, created_at)
              VALUES (?, ?, 1, ?, ?, ?, ?, ?)",
         )
-        .bind(version_id.to_string()).bind(secret_id.to_string())
-        .bind(enc.dek_id.to_string()).bind(&enc.ciphertext).bind(&enc.nonce)
-        .bind(&input.value_type).bind(&n)
-        .execute(&self.pool).await.map_err(DbError::Sqlx)?;
+        .bind(version_id.to_string())
+        .bind(secret_id.to_string())
+        .bind(enc.dek_id.to_string())
+        .bind(&enc.ciphertext)
+        .bind(&enc.nonce)
+        .bind(&input.value_type)
+        .bind(&n)
+        .execute(&self.pool)
+        .await
+        .map_err(DbError::Sqlx)?;
 
         sqlx::query(
             "INSERT OR REPLACE INTO secret_labels (secret_id, label, version_num) VALUES (?, 'AWSCURRENT', 1)",
@@ -135,7 +148,13 @@ impl SecretBackend for SqliteBackend {
         })
     }
 
-    async fn get_secret(&self, environment_id: Uuid, path: &str, name: &str, version: Option<i32>) -> Result<SecretValue> {
+    async fn get_secret(
+        &self,
+        environment_id: Uuid,
+        path: &str,
+        name: &str,
+        version: Option<i32>,
+    ) -> Result<SecretValue> {
         let row = if let Some(v) = version {
             sqlx::query(
                 "SELECT s.id as s_id, s.environment_id, s.name, s.path, s.description, s.tags,
@@ -175,9 +194,12 @@ impl SecretBackend for SqliteBackend {
         let ct: Vec<u8> = row.try_get("encrypted_value").map_err(DbError::Sqlx)?;
         let nonce: Vec<u8> = row.try_get("nonce").map_err(DbError::Sqlx)?;
         let dek: Vec<u8> = row.try_get("encrypted_dek").map_err(DbError::Sqlx)?;
-        let plaintext = (self.decrypt)(&ct, &nonce, &dek).map_err(|e| DbError::Invalid(e.to_string()))?;
+        let plaintext =
+            (self.decrypt)(&ct, &nonce, &dek).map_err(|e| DbError::Invalid(e.to_string()))?;
 
-        let value_type: String = row.try_get("value_type").unwrap_or_else(|_| "string".into());
+        let value_type: String = row
+            .try_get("value_type")
+            .unwrap_or_else(|_| "string".into());
 
         Ok(SecretValue {
             secret: Secret {
@@ -186,7 +208,10 @@ impl SecretBackend for SqliteBackend {
                 name: row.try_get("name").map_err(DbError::Sqlx)?,
                 path: row.try_get("path").map_err(DbError::Sqlx)?,
                 description: row.try_get("description").ok().flatten(),
-                tags: row.try_get::<Option<String>, _>("tags").ok().flatten()
+                tags: row
+                    .try_get::<Option<String>, _>("tags")
+                    .ok()
+                    .flatten()
                     .and_then(|s| serde_json::from_str(&s).ok())
                     .unwrap_or_default(),
                 created_at: get_ts(&row, "s_ca"),
@@ -202,7 +227,10 @@ impl SecretBackend for SqliteBackend {
                 nonce,
                 value_type: value_type.clone(),
                 created_at: get_ts(&row, "v_ca"),
-                created_by: row.try_get::<Option<String>, _>("created_by").ok().flatten()
+                created_by: row
+                    .try_get::<Option<String>, _>("created_by")
+                    .ok()
+                    .flatten()
                     .and_then(|s| Uuid::parse_str(&s).ok()),
                 deleted_at: get_opt_ts(&row, "v_da"),
                 destroyed_at: get_opt_ts(&row, "destroyed_at"),
@@ -220,8 +248,12 @@ impl SecretBackend for SqliteBackend {
         let max_v: i32 = sqlx::query(
             "SELECT COALESCE(MAX(version_num), 0) FROM secret_versions WHERE secret_id = ?",
         )
-        .bind(secret_id.to_string()).fetch_one(&self.pool).await.map_err(DbError::Sqlx)?
-        .try_get(0).unwrap_or(0);
+        .bind(secret_id.to_string())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(DbError::Sqlx)?
+        .try_get(0)
+        .unwrap_or(0);
 
         let new_v = max_v + 1;
         let version_id = Uuid::new_v4();
@@ -249,7 +281,11 @@ impl SecretBackend for SqliteBackend {
         ).bind(secret_id.to_string()).bind(new_v).execute(&self.pool).await.map_err(DbError::Sqlx)?;
 
         sqlx::query("UPDATE secrets SET updated_at = ? WHERE id = ?")
-            .bind(&n).bind(secret_id.to_string()).execute(&self.pool).await.map_err(DbError::Sqlx)?;
+            .bind(&n)
+            .bind(secret_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(DbError::Sqlx)?;
 
         let now_dt = Utc::now();
         Ok(SecretValue {
@@ -291,20 +327,31 @@ impl SecretBackend for SqliteBackend {
              WHERE s.environment_id = ? AND s.path = ? AND s.deleted_at IS NULL
              GROUP BY s.id ORDER BY s.name",
         )
-        .bind(environment_id.to_string()).bind(path)
-        .fetch_all(&self.pool).await.map_err(DbError::Sqlx)?;
+        .bind(environment_id.to_string())
+        .bind(path)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(DbError::Sqlx)?;
 
-        rows.iter().map(|r| Ok(SecretMeta {
-            id: parse_uuid(r, "id")?,
-            name: r.try_get("name").map_err(DbError::Sqlx)?,
-            path: r.try_get("path").map_err(DbError::Sqlx)?,
-            current_version: r.try_get("cur_ver").unwrap_or(0),
-            created_at: get_ts(r, "created_at"),
-            updated_at: get_ts(r, "updated_at"),
-            deleted_at: get_opt_ts(r, "deleted_at"),
-            tags: r.try_get::<Option<String>, _>("tags").ok().flatten()
-                .and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default(),
-        })).collect()
+        rows.iter()
+            .map(|r| {
+                Ok(SecretMeta {
+                    id: parse_uuid(r, "id")?,
+                    name: r.try_get("name").map_err(DbError::Sqlx)?,
+                    path: r.try_get("path").map_err(DbError::Sqlx)?,
+                    current_version: r.try_get("cur_ver").unwrap_or(0),
+                    created_at: get_ts(r, "created_at"),
+                    updated_at: get_ts(r, "updated_at"),
+                    deleted_at: get_opt_ts(r, "deleted_at"),
+                    tags: r
+                        .try_get::<Option<String>, _>("tags")
+                        .ok()
+                        .flatten()
+                        .and_then(|s| serde_json::from_str(&s).ok())
+                        .unwrap_or_default(),
+                })
+            })
+            .collect()
     }
 
     async fn get_secret_meta(&self, id: Uuid) -> Result<SecretMeta> {
@@ -315,7 +362,10 @@ impl SecretBackend for SqliteBackend {
              LEFT JOIN secret_versions sv ON sv.secret_id = s.id AND sv.deleted_at IS NULL
              WHERE s.id = ? GROUP BY s.id",
         )
-        .bind(id.to_string()).fetch_optional(&self.pool).await.map_err(DbError::Sqlx)?
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(DbError::Sqlx)?
         .ok_or(DbError::NotFound)?;
 
         Ok(SecretMeta {
@@ -326,8 +376,12 @@ impl SecretBackend for SqliteBackend {
             created_at: get_ts(&r, "created_at"),
             updated_at: get_ts(&r, "updated_at"),
             deleted_at: get_opt_ts(&r, "deleted_at"),
-            tags: r.try_get::<Option<String>, _>("tags").ok().flatten()
-                .and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default(),
+            tags: r
+                .try_get::<Option<String>, _>("tags")
+                .ok()
+                .flatten()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default(),
         })
     }
 
@@ -356,23 +410,37 @@ impl SecretBackend for SqliteBackend {
             sqlx::query(
                 "UPDATE secret_versions SET destroyed_at = ?, encrypted_value = X'', nonce = X''
                  WHERE secret_id = ? AND version_num = ?",
-            ).bind(&n).bind(secret_id.to_string()).bind(v).execute(&self.pool).await.map_err(DbError::Sqlx)?;
+            )
+            .bind(&n)
+            .bind(secret_id.to_string())
+            .bind(v)
+            .execute(&self.pool)
+            .await
+            .map_err(DbError::Sqlx)?;
         }
         Ok(())
     }
 
     async fn delete_secret(&self, secret_id: Uuid) -> Result<()> {
         sqlx::query("UPDATE secrets SET deleted_at = ? WHERE id = ?")
-            .bind(now()).bind(secret_id.to_string())
-            .execute(&self.pool).await.map_err(DbError::Sqlx)?;
+            .bind(now())
+            .bind(secret_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(DbError::Sqlx)?;
         Ok(())
     }
 
     async fn set_label(&self, secret_id: Uuid, label: &str, version_num: i32) -> Result<()> {
         sqlx::query(
             "INSERT OR REPLACE INTO secret_labels (secret_id, label, version_num) VALUES (?, ?, ?)",
-        ).bind(secret_id.to_string()).bind(label).bind(version_num)
-        .execute(&self.pool).await.map_err(DbError::Sqlx)?;
+        )
+        .bind(secret_id.to_string())
+        .bind(label)
+        .bind(version_num)
+        .execute(&self.pool)
+        .await
+        .map_err(DbError::Sqlx)?;
         Ok(())
     }
 
@@ -383,28 +451,45 @@ impl SecretBackend for SqliteBackend {
                     sv.created_at as v_ca, sv.created_by, sv.deleted_at as v_da, sv.destroyed_at
              FROM secret_versions sv WHERE sv.secret_id = ? ORDER BY sv.version_num",
         )
-        .bind(secret_id.to_string()).fetch_all(&self.pool).await.map_err(DbError::Sqlx)?;
+        .bind(secret_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(DbError::Sqlx)?;
 
-        rows.iter().map(|r| Ok(SecretVersion {
-            id: parse_uuid(r, "v_id")?,
-            secret_id,
-            version_num: r.try_get("version_num").map_err(DbError::Sqlx)?,
-            dek_id: parse_uuid(r, "dek_id")?,
-            encrypted_value: r.try_get("encrypted_value").map_err(DbError::Sqlx)?,
-            nonce: r.try_get("nonce").map_err(DbError::Sqlx)?,
-            value_type: r.try_get("value_type").unwrap_or_else(|_| "string".into()),
-            created_at: get_ts(r, "v_ca"),
-            created_by: r.try_get::<Option<String>, _>("created_by").ok().flatten()
-                .and_then(|s| Uuid::parse_str(&s).ok()),
-            deleted_at: get_opt_ts(r, "v_da"),
-            destroyed_at: get_opt_ts(r, "destroyed_at"),
-        })).collect()
+        rows.iter()
+            .map(|r| {
+                Ok(SecretVersion {
+                    id: parse_uuid(r, "v_id")?,
+                    secret_id,
+                    version_num: r.try_get("version_num").map_err(DbError::Sqlx)?,
+                    dek_id: parse_uuid(r, "dek_id")?,
+                    encrypted_value: r.try_get("encrypted_value").map_err(DbError::Sqlx)?,
+                    nonce: r.try_get("nonce").map_err(DbError::Sqlx)?,
+                    value_type: r.try_get("value_type").unwrap_or_else(|_| "string".into()),
+                    created_at: get_ts(r, "v_ca"),
+                    created_by: r
+                        .try_get::<Option<String>, _>("created_by")
+                        .ok()
+                        .flatten()
+                        .and_then(|s| Uuid::parse_str(&s).ok()),
+                    deleted_at: get_opt_ts(r, "v_da"),
+                    destroyed_at: get_opt_ts(r, "destroyed_at"),
+                })
+            })
+            .collect()
     }
 
-    async fn write_audit(&self, org_id: Option<Uuid>, actor_id: Option<Uuid>,
-        actor_type: &str, actor_email: Option<&str>, action: &str,
-        resource_type: Option<&str>, resource_id: Option<Uuid>,
-        resource_name: Option<&str>, ip: Option<&str>,
+    async fn write_audit(
+        &self,
+        org_id: Option<Uuid>,
+        actor_id: Option<Uuid>,
+        actor_type: &str,
+        actor_email: Option<&str>,
+        action: &str,
+        resource_type: Option<&str>,
+        resource_id: Option<Uuid>,
+        resource_name: Option<&str>,
+        ip: Option<&str>,
         metadata: serde_json::Value,
     ) -> Result<()> {
         sqlx::query(
@@ -423,7 +508,12 @@ impl SecretBackend for SqliteBackend {
         Ok(())
     }
 
-    async fn get_vault_mount(&self, org_id: Uuid, namespace: &str, mount_path: &str) -> Result<VaultMount> {
+    async fn get_vault_mount(
+        &self,
+        org_id: Uuid,
+        namespace: &str,
+        mount_path: &str,
+    ) -> Result<VaultMount> {
         let r = sqlx::query(
             "SELECT id, org_id, namespace, mount_path, environment_id, engine_type, config, created_at
              FROM vault_mounts WHERE org_id = ? AND namespace = ? AND mount_path = ?",
@@ -452,23 +542,37 @@ impl SecretBackend for SqliteBackend {
 
         let project_id: String = sqlx::query_scalar(
             "SELECT id FROM projects WHERE org_id = ? ORDER BY created_at LIMIT 1",
-        ).bind(org_id.to_string()).fetch_optional(&mut *tx).await.map_err(DbError::Sqlx)?
-            .ok_or(DbError::NotFound)?;
+        )
+        .bind(org_id.to_string())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(DbError::Sqlx)?
+        .ok_or(DbError::NotFound)?;
 
         let ns_id = Uuid::new_v4();
         let ins = sqlx::query(
             "INSERT OR IGNORE INTO namespaces (id, org_id, path, created_at) VALUES (?, ?, ?, ?)",
-        ).bind(ns_id.to_string()).bind(org_id.to_string()).bind(path).bind(now())
-            .execute(&mut *tx).await.map_err(DbError::Sqlx)?;
+        )
+        .bind(ns_id.to_string())
+        .bind(org_id.to_string())
+        .bind(path)
+        .bind(now())
+        .execute(&mut *tx)
+        .await
+        .map_err(DbError::Sqlx)?;
         if ins.rows_affected() == 0 {
             return Err(DbError::Conflict("namespace already exists".into()));
         }
 
         let env_id = Uuid::new_v4();
         sqlx::query("INSERT INTO environments (id, project_id, name, slug) VALUES (?, ?, ?, ?)")
-            .bind(env_id.to_string()).bind(&project_id)
-            .bind(format!("ns:{path}")).bind(format!("ns-{ns_id}"))
-            .execute(&mut *tx).await.map_err(DbError::Sqlx)?;
+            .bind(env_id.to_string())
+            .bind(&project_id)
+            .bind(format!("ns:{path}"))
+            .bind(format!("ns-{ns_id}"))
+            .execute(&mut *tx)
+            .await
+            .map_err(DbError::Sqlx)?;
 
         sqlx::query(
             "INSERT INTO vault_mounts (id, org_id, namespace, mount_path, environment_id, engine_type)
@@ -481,25 +585,45 @@ impl SecretBackend for SqliteBackend {
     }
 
     async fn get_namespace(&self, org_id: Uuid, path: &str) -> Result<Namespace> {
-        let r = sqlx::query("SELECT id, path, created_at FROM namespaces WHERE org_id = ? AND path = ?")
-            .bind(org_id.to_string()).bind(path)
-            .fetch_optional(&self.pool).await.map_err(DbError::Sqlx)?
-            .ok_or(DbError::NotFound)?;
+        let r = sqlx::query(
+            "SELECT id, path, created_at FROM namespaces WHERE org_id = ? AND path = ?",
+        )
+        .bind(org_id.to_string())
+        .bind(path)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(DbError::Sqlx)?
+        .ok_or(DbError::NotFound)?;
         ns_from_row(&r, org_id)
     }
 
     async fn list_namespaces(&self, org_id: Uuid) -> Result<Vec<Namespace>> {
-        let rows = sqlx::query("SELECT id, path, created_at FROM namespaces WHERE org_id = ? ORDER BY path")
-            .bind(org_id.to_string()).fetch_all(&self.pool).await.map_err(DbError::Sqlx)?;
+        let rows = sqlx::query(
+            "SELECT id, path, created_at FROM namespaces WHERE org_id = ? ORDER BY path",
+        )
+        .bind(org_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(DbError::Sqlx)?;
         rows.iter().map(|r| ns_from_row(r, org_id)).collect()
     }
 
     async fn delete_namespace(&self, org_id: Uuid, path: &str) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(DbError::Sqlx)?;
-        let child_like = format!("{}/%", path.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+        let child_like = format!(
+            "{}/%",
+            path.replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        );
         let has_children: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM namespaces WHERE org_id = ? AND path LIKE ? ESCAPE '\\')",
-        ).bind(org_id.to_string()).bind(&child_like).fetch_one(&mut *tx).await.map_err(DbError::Sqlx)?;
+        )
+        .bind(org_id.to_string())
+        .bind(&child_like)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(DbError::Sqlx)?;
         if has_children {
             return Err(DbError::Conflict("namespace has child namespaces".into()));
         }
@@ -507,7 +631,12 @@ impl SecretBackend for SqliteBackend {
             "SELECT EXISTS (
                 SELECT 1 FROM secrets s JOIN vault_mounts m ON m.environment_id = s.environment_id
                 WHERE m.org_id = ? AND m.namespace = ? AND s.deleted_at IS NULL)",
-        ).bind(org_id.to_string()).bind(path).fetch_one(&mut *tx).await.map_err(DbError::Sqlx)?;
+        )
+        .bind(org_id.to_string())
+        .bind(path)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(DbError::Sqlx)?;
         if has_secrets {
             return Err(DbError::Conflict("namespace is not empty".into()));
         }
@@ -515,15 +644,26 @@ impl SecretBackend for SqliteBackend {
             "SELECT environment_id FROM vault_mounts WHERE org_id = ? AND namespace = ? AND environment_id IS NOT NULL",
         ).bind(org_id.to_string()).bind(path).fetch_all(&mut *tx).await.map_err(DbError::Sqlx)?;
         sqlx::query("DELETE FROM vault_mounts WHERE org_id = ? AND namespace = ?")
-            .bind(org_id.to_string()).bind(path).execute(&mut *tx).await.map_err(DbError::Sqlx)?;
+            .bind(org_id.to_string())
+            .bind(path)
+            .execute(&mut *tx)
+            .await
+            .map_err(DbError::Sqlx)?;
         let gone = sqlx::query("DELETE FROM namespaces WHERE org_id = ? AND path = ?")
-            .bind(org_id.to_string()).bind(path).execute(&mut *tx).await.map_err(DbError::Sqlx)?;
+            .bind(org_id.to_string())
+            .bind(path)
+            .execute(&mut *tx)
+            .await
+            .map_err(DbError::Sqlx)?;
         if gone.rows_affected() == 0 {
             return Err(DbError::NotFound);
         }
         for env_id in env_ids {
             sqlx::query("DELETE FROM environments WHERE id = ?")
-                .bind(env_id).execute(&mut *tx).await.map_err(DbError::Sqlx)?;
+                .bind(env_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(DbError::Sqlx)?;
         }
         tx.commit().await.map_err(DbError::Sqlx)?;
         Ok(())
@@ -536,7 +676,9 @@ impl SecretBackend for SqliteBackend {
         .bind(serde_json::to_string(&tags).unwrap_or_else(|_| "{}".into()))
         .bind(now())
         .bind(secret_id.to_string())
-        .execute(&self.pool).await.map_err(DbError::Sqlx)?;
+        .execute(&self.pool)
+        .await
+        .map_err(DbError::Sqlx)?;
         Ok(())
     }
 
@@ -551,7 +693,12 @@ impl SecretBackend for SqliteBackend {
         Ok(())
     }
 
-    async fn restore_secret(&self, environment_id: Uuid, path: &str, name: &str) -> Result<SecretMeta> {
+    async fn restore_secret(
+        &self,
+        environment_id: Uuid,
+        path: &str,
+        name: &str,
+    ) -> Result<SecretMeta> {
         let rows_affected = sqlx::query(
             "UPDATE secrets SET deleted_at = NULL, updated_at = ?
              WHERE environment_id = ? AND path = ? AND name = ? AND deleted_at IS NOT NULL",
@@ -560,7 +707,9 @@ impl SecretBackend for SqliteBackend {
         .bind(environment_id.to_string())
         .bind(path)
         .bind(name)
-        .execute(&self.pool).await.map_err(DbError::Sqlx)?
+        .execute(&self.pool)
+        .await
+        .map_err(DbError::Sqlx)?
         .rows_affected();
 
         if rows_affected == 0 {
@@ -578,7 +727,9 @@ impl SecretBackend for SqliteBackend {
         .bind(environment_id.to_string())
         .bind(path)
         .bind(name)
-        .fetch_optional(&self.pool).await.map_err(DbError::Sqlx)?
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(DbError::Sqlx)?
         .ok_or(DbError::NotFound)?;
 
         Ok(SecretMeta {
@@ -589,12 +740,23 @@ impl SecretBackend for SqliteBackend {
             created_at: get_ts(&r, "created_at"),
             updated_at: get_ts(&r, "updated_at"),
             deleted_at: None,
-            tags: r.try_get::<Option<String>, _>("tags").ok().flatten()
-                .and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default(),
+            tags: r
+                .try_get::<Option<String>, _>("tags")
+                .ok()
+                .flatten()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default(),
         })
     }
 
-    async fn upsert_vault_mount(&self, org_id: Uuid, namespace: &str, mount_path: &str, env_id: Option<Uuid>, engine_type: &str) -> Result<VaultMount> {
+    async fn upsert_vault_mount(
+        &self,
+        org_id: Uuid,
+        namespace: &str,
+        mount_path: &str,
+        env_id: Option<Uuid>,
+        engine_type: &str,
+    ) -> Result<VaultMount> {
         let id = Uuid::new_v4();
         sqlx::query(
             "INSERT INTO vault_mounts (id, org_id, namespace, mount_path, environment_id, engine_type)
@@ -614,11 +776,18 @@ fn mount_from_row(r: &sqlx::sqlite::SqliteRow, org_id: Uuid) -> Result<VaultMoun
         org_id,
         namespace: r.try_get("namespace").map_err(DbError::Sqlx)?,
         mount_path: r.try_get("mount_path").map_err(DbError::Sqlx)?,
-        environment_id: r.try_get::<Option<String>, _>("environment_id").ok().flatten()
+        environment_id: r
+            .try_get::<Option<String>, _>("environment_id")
+            .ok()
+            .flatten()
             .and_then(|s| Uuid::parse_str(&s).ok()),
         engine_type: r.try_get("engine_type").map_err(DbError::Sqlx)?,
-        config: r.try_get::<Option<String>, _>("config").ok().flatten()
-            .and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default(),
+        config: r
+            .try_get::<Option<String>, _>("config")
+            .ok()
+            .flatten()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default(),
         created_at: get_ts(r, "created_at"),
     })
 }

@@ -44,7 +44,11 @@ pub fn generate_password(opts: &PasswordOptions) -> Result<String, &'static str>
     let mut required_sets: Vec<Vec<u8>> = Vec::new();
 
     let mut add_set = |chars: &[u8]| {
-        let filtered: Vec<u8> = chars.iter().copied().filter(|c| !excluded.contains(c)).collect();
+        let filtered: Vec<u8> = chars
+            .iter()
+            .copied()
+            .filter(|c| !excluded.contains(c))
+            .collect();
         if !filtered.is_empty() {
             charset.extend_from_slice(&filtered);
             filtered
@@ -55,23 +59,33 @@ pub fn generate_password(opts: &PasswordOptions) -> Result<String, &'static str>
 
     if !opts.exclude_uppercase {
         let s = add_set(UPPERCASE);
-        if opts.require_each_included_type && !s.is_empty() { required_sets.push(s); }
+        if opts.require_each_included_type && !s.is_empty() {
+            required_sets.push(s);
+        }
     }
     if !opts.exclude_lowercase {
         let s = add_set(LOWERCASE);
-        if opts.require_each_included_type && !s.is_empty() { required_sets.push(s); }
+        if opts.require_each_included_type && !s.is_empty() {
+            required_sets.push(s);
+        }
     }
     if !opts.exclude_numbers {
         let s = add_set(DIGITS);
-        if opts.require_each_included_type && !s.is_empty() { required_sets.push(s); }
+        if opts.require_each_included_type && !s.is_empty() {
+            required_sets.push(s);
+        }
     }
     if !opts.exclude_punctuation {
         let s = add_set(PUNCTUATION);
-        if opts.require_each_included_type && !s.is_empty() { required_sets.push(s); }
+        if opts.require_each_included_type && !s.is_empty() {
+            required_sets.push(s);
+        }
     }
     if opts.include_space {
         let s = add_set(SPACE);
-        if opts.require_each_included_type && !s.is_empty() { required_sets.push(s); }
+        if opts.require_each_included_type && !s.is_empty() {
+            required_sets.push(s);
+        }
     }
 
     if charset.is_empty() {
@@ -129,7 +143,10 @@ mod tests {
             ..PasswordOptions::default()
         };
         let pw = generate_password(&opts).unwrap();
-        assert!(!pw.chars().any(|c| c.is_uppercase()), "no uppercase expected");
+        assert!(
+            !pw.chars().any(|c| c.is_uppercase()),
+            "no uppercase expected"
+        );
     }
 
     #[test]
@@ -140,7 +157,10 @@ mod tests {
             ..PasswordOptions::default()
         };
         let pw = generate_password(&opts).unwrap();
-        assert!(!pw.chars().any(|c| c.is_ascii_digit()), "no digits expected");
+        assert!(
+            !pw.chars().any(|c| c.is_ascii_digit()),
+            "no digits expected"
+        );
     }
 
     #[test]
@@ -153,7 +173,10 @@ mod tests {
         let pw = generate_password(&opts).unwrap();
         let punct: &[u8] = b"!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
         for c in pw.chars() {
-            assert!(!punct.contains(&(c as u8)), "no punctuation expected, got {c}");
+            assert!(
+                !punct.contains(&(c as u8)),
+                "no punctuation expected, got {c}"
+            );
         }
     }
 
@@ -182,11 +205,20 @@ mod tests {
             ..PasswordOptions::default()
         };
         let pw = generate_password(&opts).unwrap();
-        assert!(pw.chars().any(|c| c.is_uppercase()), "should have uppercase");
-        assert!(pw.chars().any(|c| c.is_lowercase()), "should have lowercase");
+        assert!(
+            pw.chars().any(|c| c.is_uppercase()),
+            "should have uppercase"
+        );
+        assert!(
+            pw.chars().any(|c| c.is_lowercase()),
+            "should have lowercase"
+        );
         assert!(pw.chars().any(|c| c.is_ascii_digit()), "should have digit");
         let punct: &[u8] = b"!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
-        assert!(pw.chars().any(|c| punct.contains(&(c as u8))), "should have punctuation");
+        assert!(
+            pw.chars().any(|c| punct.contains(&(c as u8))),
+            "should have punctuation"
+        );
     }
 
     #[test]
@@ -200,7 +232,10 @@ mod tests {
 
     #[test]
     fn zero_length_is_error() {
-        let opts = PasswordOptions { length: 0, ..PasswordOptions::default() };
+        let opts = PasswordOptions {
+            length: 0,
+            ..PasswordOptions::default()
+        };
         assert!(generate_password(&opts).is_err());
     }
 

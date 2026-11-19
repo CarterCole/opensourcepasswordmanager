@@ -1,6 +1,9 @@
 //! Mounts the Vault KV v2 compatible router at /v1/
 use super::{
-    auth::{cookie_login, cookie_logout, enforce_policy, require_vault_token, resolve_namespace, VaultState},
+    auth::{
+        cookie_login, cookie_logout, enforce_policy, require_vault_token, resolve_namespace,
+        VaultState,
+    },
     handlers,
 };
 use axum::{
@@ -19,7 +22,10 @@ pub fn vault_router(state: VaultState) -> Router {
         // sys/namespaces (OpenBao): list/create/read/delete, relative to the request namespace
         .route("/sys/namespaces", get(handlers::ns_list))
         .route("/sys/namespaces/*path", get(handlers::ns_read))
-        .route("/sys/namespaces/*path", post(handlers::ns_create).put(handlers::ns_create))
+        .route(
+            "/sys/namespaces/*path",
+            post(handlers::ns_create).put(handlers::ns_create),
+        )
         .route("/sys/namespaces/*path", delete(handlers::ns_delete))
         // auth
         .route("/auth/token/create", post(handlers::token_create))
@@ -29,7 +35,10 @@ pub fn vault_router(state: VaultState) -> Router {
         .route("/:mount/data/*path", delete(handlers::kv_delete_latest))
         // KV v2 version management
         .route("/:mount/delete/*path", post(handlers::kv_delete_versions))
-        .route("/:mount/undelete/*path", post(handlers::kv_undelete_versions))
+        .route(
+            "/:mount/undelete/*path",
+            post(handlers::kv_undelete_versions),
+        )
         .route("/:mount/destroy/*path", put(handlers::kv_destroy_versions))
         // KV v2 metadata (GET/LIST) — root listing (no path) and deep listing
         .route("/:mount/metadata", get(handlers::kv_list_root))

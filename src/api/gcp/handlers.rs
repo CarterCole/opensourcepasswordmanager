@@ -15,7 +15,11 @@ use crate::api::common::{require_auth, AppState};
 
 fn gcp_error(code: u16, message: &str, status: &str) -> Response {
     let http_status = StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    (http_status, Json(json!({ "error": { "code": code, "message": message, "status": status } }))).into_response()
+    (
+        http_status,
+        Json(json!({ "error": { "code": code, "message": message, "status": status } })),
+    )
+        .into_response()
 }
 
 fn not_found(name: &str) -> Response {
@@ -52,7 +56,11 @@ pub async fn list_secrets(
                 "replication": {"automatic": {}},
                 "createTime": s.created_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
             })).collect();
-            (StatusCode::OK, Json(json!({ "secrets": list, "nextPageToken": "" }))).into_response()
+            (
+                StatusCode::OK,
+                Json(json!({ "secrets": list, "nextPageToken": "" })),
+            )
+                .into_response()
         }
         Err(e) => gcp_error(500, &e.to_string(), "INTERNAL"),
     }
@@ -84,12 +92,27 @@ pub async fn create_secret(
 
     // Store a sentinel placeholder — the real value arrives via addVersion.
     // value_type="gcp-placeholder" guards against serving this version via :access.
-    match state.store.put(state.default_env_id, "/", &name, b"", "gcp-placeholder", None).await {
-        Ok(_) => (StatusCode::OK, Json(json!({
-            "name": secret_resource(&project, &name),
-            "replication": {"automatic": {}},
-            "createTime": rfc3339_now(),
-        }))).into_response(),
+    match state
+        .store
+        .put(
+            state.default_env_id,
+            "/",
+            &name,
+            b"",
+            "gcp-placeholder",
+            None,
+        )
+        .await
+    {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(json!({
+                "name": secret_resource(&project, &name),
+                "replication": {"automatic": {}},
+                "createTime": rfc3339_now(),
+            })),
+        )
+            .into_response(),
         Err(e) => gcp_error(500, &e.to_string(), "INTERNAL"),
     }
 }
@@ -116,19 +139,37 @@ pub async fn post_action(
 
 async fn add_version(state: AppState, project: String, secret: String, body: Value) -> Response {
     let data_b64 = body
-        .get("payload").and_then(|p| p.get("data")).and_then(|d| d.as_str()).unwrap_or("");
+        .get("payload")
+        .and_then(|p| p.get("data"))
+        .and_then(|d| d.as_str())
+        .unwrap_or("");
 
     let plaintext = match B64.decode(data_b64) {
         Ok(bytes) => bytes,
         Err(_) => return gcp_error(400, "Invalid base64 in payload.data", "INVALID_ARGUMENT"),
     };
 
-    match state.store.put(state.default_env_id, "/", &secret, &plaintext, "bytes", None).await {
-        Ok(sv) => (StatusCode::OK, Json(json!({
-            "name": version_resource(&project, &secret, sv.version.version_num),
-            "state": "ENABLED",
-            "createTime": rfc3339_now(),
-        }))).into_response(),
+    match state
+        .store
+        .put(
+            state.default_env_id,
+            "/",
+            &secret,
+            &plaintext,
+            "bytes",
+            None,
+        )
+        .await
+    {
+        Ok(sv) => (
+            StatusCode::OK,
+            Json(json!({
+                "name": version_resource(&project, &secret, sv.version.version_num),
+                "state": "ENABLED",
+                "createTime": rfc3339_now(),
+            })),
+        )
+            .into_response(),
         Err(e) => gcp_error(500, &e.to_string(), "INTERNAL"),
     }
 }
@@ -146,24 +187,39 @@ pub async fn get_action(
 
     if let Some((secret, version_part)) = action.split_once("/versions/") {
         let version_str = version_part.trim_end_matches(":access");
-        let version: Option<i32> = if version_str == "latest" { None } else { version_str.parse().ok() };
+        let version: Option<i32> = if version_str == "latest" {
+            None
+        } else {
+            version_str.parse().ok()
+        };
 
-        return match state.store.get(state.default_env_id, "/", secret, version).await {
+        return match state
+            .store
+            .get(state.default_env_id, "/", secret, version)
+            .await
+        {
             Ok(sv) => {
                 // Guard: placeholder versions (created by create_secret) are not accessible
                 if sv.version.value_type == "gcp-placeholder" {
                     return gcp_error(
                         404,
-                        &format!("Secret [{secret}] version [{}] is not accessible.", sv.version.version_num),
+                        &format!(
+                            "Secret [{secret}] version [{}] is not accessible.",
+                            sv.version.version_num
+                        ),
                         "NOT_FOUND",
                     );
                 }
                 let encoded = B64.encode(&sv.plaintext);
                 let ver_num = sv.version.version_num;
-                (StatusCode::OK, Json(json!({
-                    "name": version_resource(&project, secret, ver_num),
-                    "payload": { "data": encoded, "dataCrc32c": "0" },
-                }))).into_response()
+                (
+                    StatusCode::OK,
+                    Json(json!({
+                        "name": version_resource(&project, secret, ver_num),
+                        "payload": { "data": encoded, "dataCrc32c": "0" },
+                    })),
+                )
+                    .into_response()
             }
             Err(_) => not_found(secret),
         };
@@ -193,7 +249,11 @@ pub async fn delete_action(
     }
 
     let secret = &action;
-    match state.store.get(state.default_env_id, "/", secret, None).await {
+    match state
+        .store
+        .get(state.default_env_id, "/", secret, None)
+        .await
+    {
         Ok(sv) => {
             let _ = state.store.delete(sv.secret.id).await;
             (StatusCode::OK, Json(json!({}))).into_response()

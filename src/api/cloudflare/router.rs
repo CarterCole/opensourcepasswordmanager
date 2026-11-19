@@ -1,14 +1,17 @@
+use super::handlers;
+use crate::api::common::AppState;
 use axum::{
     routing::{delete, get, patch, post},
     Router,
 };
-use crate::api::common::AppState;
-use super::handlers;
 
 pub fn cf_router(state: AppState) -> Router {
     Router::new()
         // Quota
-        .route("/v4/accounts/:account/secrets_store/quota", get(handlers::get_quota))
+        .route(
+            "/v4/accounts/:account/secrets_store/quota",
+            get(handlers::get_quota),
+        )
         // Stores
         .route(
             "/v4/accounts/:account/secrets_store/stores",

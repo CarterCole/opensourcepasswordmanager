@@ -73,8 +73,13 @@ async fn add_version_and_access_latest() {
     );
     let (astatus, abody) = common::call(app, access).await;
     assert_eq!(astatus, StatusCode::OK);
-    let returned_b64 = abody["payload"]["data"].as_str().expect("payload.data should be string");
-    assert_eq!(returned_b64, hello_b64, "base64 roundtrip should be lossless");
+    let returned_b64 = abody["payload"]["data"]
+        .as_str()
+        .expect("payload.data should be string");
+    assert_eq!(
+        returned_b64, hello_b64,
+        "base64 roundtrip should be lossless"
+    );
 }
 
 // ── access version by number ──────────────────────────────────────────────────
@@ -102,11 +107,17 @@ async fn access_version_by_number() {
     let (_, add_body) = common::call(app.clone(), add).await;
 
     // Extract version number from response name like "projects/p/secrets/s/versions/N"
-    let ver_name = add_body["name"].as_str().expect("name should be in addVersion response");
-    let version_num = ver_name.split('/').last().expect("version number should be last segment");
+    let ver_name = add_body["name"]
+        .as_str()
+        .expect("name should be in addVersion response");
+    let version_num = ver_name
+        .split('/')
+        .last()
+        .expect("version number should be last segment");
 
     // Access by the returned version number
-    let uri = format!("/v1/projects/myproject/secrets/numversiontest/versions/{version_num}:access");
+    let uri =
+        format!("/v1/projects/myproject/secrets/numversiontest/versions/{version_num}:access");
     let access = bearer_req("GET", &uri, json!(null));
     let (status, body) = common::call(app, access).await;
     assert_eq!(status, StatusCode::OK);
@@ -184,7 +195,9 @@ async fn binary_value_roundtrip() {
     );
     let (status, body) = common::call(app, access).await;
     assert_eq!(status, StatusCode::OK);
-    let got = body["payload"]["data"].as_str().expect("data should be base64 string");
+    let got = body["payload"]["data"]
+        .as_str()
+        .expect("data should be base64 string");
     let decoded = B64.decode(got).expect("should decode to valid bytes");
     assert_eq!(decoded, raw, "binary roundtrip should be lossless");
 }

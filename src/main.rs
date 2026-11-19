@@ -1,8 +1,8 @@
-mod config;
-mod db;
-mod core;
-mod auth;
 mod api;
+mod auth;
+mod config;
+mod core;
+mod db;
 mod sync;
 mod ui;
 
@@ -32,43 +32,61 @@ async fn main() -> Result<()> {
     //   sqlite:./secretd.db  →  SQLite (no Docker, great for demo/dev)
     //   postgres://...       →  PostgreSQL (production)
 
-    enum Pools { Sqlite(sqlx::SqlitePool), Postgres(sqlx::PgPool) }
+    enum Pools {
+        Sqlite(sqlx::SqlitePool),
+        Postgres(sqlx::PgPool),
+    }
 
-    let (backend, pools, (default_org_id, default_env_id)) = if cfg.database_url.starts_with("sqlite:") {
-        tracing::info!("SQLite mode — {}", cfg.database_url);
-        let opts = cfg.database_url.parse::<sqlx::sqlite::SqliteConnectOptions>()
-            .context("invalid SQLite URL")?
-            .create_if_missing(true)
-            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
-        let pool = sqlx::SqlitePool::connect_with(opts)
-            .await.context("failed to open SQLite database")?;
-        sqlx::migrate::Migrator::new(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations/sqlite")
-        ).await?.run(&pool).await.context("SQLite migrations failed")?;
-        let ids = bootstrap_sqlite(&pool).await?;
-        let c1 = crypto.clone(); let c2 = crypto.clone();
-        let b: Arc<dyn db::SecretBackend> = Arc::new(db::sqlite::SqliteBackend::new(
-            pool.clone(),
-            move |pt: &[u8]| c1.encrypt(pt),
-            move |ct, n, d| c2.decrypt(ct, n, d),
-        ));
-        (b, Pools::Sqlite(pool), ids)
-    } else {
-        tracing::info!("PostgreSQL mode");
-        let pool = sqlx::PgPool::connect(&cfg.database_url)
-            .await.context("failed to connect to PostgreSQL")?;
-        sqlx::migrate::Migrator::new(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations")
-        ).await?.run(&pool).await.context("PostgreSQL migrations failed")?;
-        let ids = bootstrap_postgres(&pool).await?;
-        let c1 = crypto.clone(); let c2 = crypto.clone();
-        let b: Arc<dyn db::SecretBackend> = Arc::new(db::postgres::PostgresBackend::new(
-            pool.clone(),
-            move |pt: &[u8]| c1.encrypt(pt),
-            move |ct, n, d| c2.decrypt(ct, n, d),
-        ));
-        (b, Pools::Postgres(pool), ids)
-    };
+    let (backend, pools, (default_org_id, default_env_id)) =
+        if cfg.database_url.starts_with("sqlite:") {
+            tracing::info!("SQLite mode — {}", cfg.database_url);
+            let opts = cfg
+                .database_url
+                .parse::<sqlx::sqlite::SqliteConnectOptions>()
+                .context("invalid SQLite URL")?
+                .create_if_missing(true)
+                .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
+            let pool = sqlx::SqlitePool::connect_with(opts)
+                .await
+                .context("failed to open SQLite database")?;
+            sqlx::migrate::Migrator::new(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations/sqlite"),
+            )
+            .await?
+            .run(&pool)
+            .await
+            .context("SQLite migrations failed")?;
+            let ids = bootstrap_sqlite(&pool).await?;
+            let c1 = crypto.clone();
+            let c2 = crypto.clone();
+            let b: Arc<dyn db::SecretBackend> = Arc::new(db::sqlite::SqliteBackend::new(
+                pool.clone(),
+                move |pt: &[u8]| c1.encrypt(pt),
+                move |ct, n, d| c2.decrypt(ct, n, d),
+            ));
+            (b, Pools::Sqlite(pool), ids)
+        } else {
+            tracing::info!("PostgreSQL mode");
+            let pool = sqlx::PgPool::connect(&cfg.database_url)
+                .await
+                .context("failed to connect to PostgreSQL")?;
+            sqlx::migrate::Migrator::new(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"),
+            )
+            .await?
+            .run(&pool)
+            .await
+            .context("PostgreSQL migrations failed")?;
+            let ids = bootstrap_postgres(&pool).await?;
+            let c1 = crypto.clone();
+            let c2 = crypto.clone();
+            let b: Arc<dyn db::SecretBackend> = Arc::new(db::postgres::PostgresBackend::new(
+                pool.clone(),
+                move |pt: &[u8]| c1.encrypt(pt),
+                move |ct, n, d| c2.decrypt(ct, n, d),
+            ));
+            (b, Pools::Postgres(pool), ids)
+        };
 
     tracing::info!("migrations applied — org={default_org_id} env={default_env_id}");
 
@@ -107,13 +125,16 @@ async fn main() -> Result<()> {
     };
 
     let mut app = Router::new()
-        .nest("/v1",       api::vault::vault_router(vault_state))
-        .nest("/",         api::aws::aws_router(app_state.clone()))
-        .nest("/gcp",      api::gcp::gcp_router(app_state.clone()))
-        .nest("/azure",    api::azure::azure_router(app_state.clone()))
-        .nest("/client",   api::cloudflare::cf_router(app_state.clone()))
-        .nest("/bitwarden",api::bitwarden::bitwarden_router(app_state.clone()))
-        .nest("/ui",       ui::serve_ui())
+        .nest("/v1", api::vault::vault_router(vault_state))
+        .nest("/", api::aws::aws_router(app_state.clone()))
+        .nest("/gcp", api::gcp::gcp_router(app_state.clone()))
+        .nest("/azure", api::azure::azure_router(app_state.clone()))
+        .nest("/client", api::cloudflare::cf_router(app_state.clone()))
+        .nest(
+            "/bitwarden",
+            api::bitwarden::bitwarden_router(app_state.clone()),
+        )
+        .nest("/ui", ui::serve_ui())
         .route("/", axum::routing::get(home))
         .fallback(not_found);
 
@@ -171,19 +192,27 @@ async fn bootstrap_postgres(pool: &sqlx::PgPool) -> Result<(Uuid, Uuid)> {
     let org = sqlx::query(
         "INSERT INTO organizations (name, slug) VALUES ('default', 'default')
          ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id",
-    ).fetch_one(pool).await?;
+    )
+    .fetch_one(pool)
+    .await?;
     let org_id: Uuid = org.get("id");
 
     let proj = sqlx::query(
         "INSERT INTO projects (org_id, name, slug) VALUES ($1, 'default', 'default')
          ON CONFLICT (org_id, slug) DO UPDATE SET name = EXCLUDED.name RETURNING id",
-    ).bind(org_id).fetch_one(pool).await?;
+    )
+    .bind(org_id)
+    .fetch_one(pool)
+    .await?;
     let proj_id: Uuid = proj.get("id");
 
     let env = sqlx::query(
         "INSERT INTO environments (project_id, name, slug) VALUES ($1, 'default', 'default')
          ON CONFLICT (project_id, slug) DO UPDATE SET name = EXCLUDED.name RETURNING id",
-    ).bind(proj_id).fetch_one(pool).await?;
+    )
+    .bind(proj_id)
+    .fetch_one(pool)
+    .await?;
     let env_id: Uuid = env.get("id");
 
     sqlx::query(
@@ -199,25 +228,39 @@ async fn bootstrap_sqlite(pool: &sqlx::SqlitePool) -> Result<(Uuid, Uuid)> {
 
     // Insert OR IGNORE so re-runs are idempotent; read back the real IDs.
     let org_id = Uuid::new_v4();
-    sqlx::query("INSERT OR IGNORE INTO organizations (id, name, slug) VALUES (?, 'default', 'default')")
-        .bind(org_id.to_string()).execute(pool).await?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO organizations (id, name, slug) VALUES (?, 'default', 'default')",
+    )
+    .bind(org_id.to_string())
+    .execute(pool)
+    .await?;
     let org_id: Uuid = sqlx::query("SELECT id FROM organizations WHERE slug = 'default'")
-        .fetch_one(pool).await?.try_get::<String, _>("id")
+        .fetch_one(pool)
+        .await?
+        .try_get::<String, _>("id")
         .map(|s| Uuid::parse_str(&s).unwrap_or(org_id))?;
 
     let proj_id = Uuid::new_v4();
     sqlx::query("INSERT OR IGNORE INTO projects (id, org_id, name, slug) VALUES (?, ?, 'default', 'default')")
         .bind(proj_id.to_string()).bind(org_id.to_string()).execute(pool).await?;
-    let proj_id: Uuid = sqlx::query("SELECT id FROM projects WHERE slug = 'default' AND org_id = ?")
-        .bind(org_id.to_string()).fetch_one(pool).await?
-        .try_get::<String, _>("id").map(|s| Uuid::parse_str(&s).unwrap_or(proj_id))?;
+    let proj_id: Uuid =
+        sqlx::query("SELECT id FROM projects WHERE slug = 'default' AND org_id = ?")
+            .bind(org_id.to_string())
+            .fetch_one(pool)
+            .await?
+            .try_get::<String, _>("id")
+            .map(|s| Uuid::parse_str(&s).unwrap_or(proj_id))?;
 
     let env_id = Uuid::new_v4();
     sqlx::query("INSERT OR IGNORE INTO environments (id, project_id, name, slug) VALUES (?, ?, 'default', 'default')")
         .bind(env_id.to_string()).bind(proj_id.to_string()).execute(pool).await?;
-    let env_id: Uuid = sqlx::query("SELECT id FROM environments WHERE slug = 'default' AND project_id = ?")
-        .bind(proj_id.to_string()).fetch_one(pool).await?
-        .try_get::<String, _>("id").map(|s| Uuid::parse_str(&s).unwrap_or(env_id))?;
+    let env_id: Uuid =
+        sqlx::query("SELECT id FROM environments WHERE slug = 'default' AND project_id = ?")
+            .bind(proj_id.to_string())
+            .fetch_one(pool)
+            .await?
+            .try_get::<String, _>("id")
+            .map(|s| Uuid::parse_str(&s).unwrap_or(env_id))?;
 
     let mount_id = Uuid::new_v4();
     sqlx::query(
@@ -229,7 +272,10 @@ async fn bootstrap_sqlite(pool: &sqlx::SqlitePool) -> Result<(Uuid, Uuid)> {
     Ok((org_id, env_id))
 }
 
-async fn not_found(uri: axum::http::Uri, headers: axum::http::HeaderMap) -> axum::response::Response {
+async fn not_found(
+    uri: axum::http::Uri,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
     use axum::response::IntoResponse;
     let path = uri.path();
     let wants_json = headers
@@ -242,9 +288,11 @@ async fn not_found(uri: axum::http::Uri, headers: axum::http::HeaderMap) -> axum
         (
             axum::http::StatusCode::NOT_FOUND,
             axum::Json(serde_json::json!({ "error": "not_found", "path": path })),
-        ).into_response()
+        )
+            .into_response()
     } else {
-        let body = format!(r#"<!doctype html>
+        let body = format!(
+            r#"<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -263,13 +311,19 @@ async fn not_found(uri: axum::http::Uri, headers: axum::http::HeaderMap) -> axum
   <p>No route for <span class="path">{path}</span></p>
   <a href="/">← back to index</a>
 </body>
-</html>"#);
-        (axum::http::StatusCode::NOT_FOUND, axum::response::Html(body)).into_response()
+</html>"#
+        );
+        (
+            axum::http::StatusCode::NOT_FOUND,
+            axum::response::Html(body),
+        )
+            .into_response()
     }
 }
 
 async fn home() -> axum::response::Html<&'static str> {
-    axum::response::Html(r#"<!doctype html>
+    axum::response::Html(
+        r#"<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -304,5 +358,6 @@ async fn home() -> axum::response::Html<&'static str> {
     </tbody>
   </table>
 </body>
-</html>"#)
+</html>"#,
+    )
 }

@@ -50,19 +50,29 @@ mod tests {
     #[test]
     fn generated_key_starts_with_sk_live() {
         let (raw, _prefix, _hash) = ApiKeyService::generate().unwrap();
-        assert!(raw.starts_with("sk_live_"), "key should start with sk_live_: {raw}");
+        assert!(
+            raw.starts_with("sk_live_"),
+            "key should start with sk_live_: {raw}"
+        );
     }
 
     #[test]
     fn prefix_is_first_12_chars() {
         let (raw, prefix, _hash) = ApiKeyService::generate().unwrap();
-        assert_eq!(&raw[..12], prefix, "prefix should be first 12 chars of raw key");
+        assert_eq!(
+            &raw[..12],
+            prefix,
+            "prefix should be first 12 chars of raw key"
+        );
     }
 
     #[test]
     fn verify_correct_key_returns_true() {
         let (raw, _prefix, hash) = ApiKeyService::generate().unwrap();
-        assert!(ApiKeyService::verify(&raw, &hash), "verify should return true for correct key");
+        assert!(
+            ApiKeyService::verify(&raw, &hash),
+            "verify should return true for correct key"
+        );
     }
 
     #[test]
