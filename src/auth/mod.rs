@@ -3,6 +3,7 @@ pub mod email;
 pub mod manager;
 pub mod passkey;
 pub mod password_hash;
+pub mod policy;
 pub mod provider;
 pub mod rbac;
 pub mod session;

@@ -449,3 +449,64 @@ async fn protected_route_rejects_bad_session_cookie() {
     let (status, _body) = common::call(app(), req).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+// ── per-path policies ─────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn reader_child_token_cannot_write_but_can_read() {
+    let app = app();
+    // Root (dev) token mints a read-only child token.
+    let (s, body) = common::call(
+        app.clone(),
+        ns_req("POST", "/auth/token/create", None, json!({"policies": ["reader"]})),
+    ).await;
+    assert_eq!(s, StatusCode::OK);
+    let tok = body["auth"]["client_token"].as_str().unwrap().to_string();
+
+    // Write is denied by policy.
+    let w = axum::http::Request::builder()
+        .method("POST").uri("/secret/data/app/db")
+        .header("X-Vault-Token", &tok)
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(serde_json::to_vec(&json!({"data": {"pw": "x"}})).unwrap()))
+        .unwrap();
+    assert_eq!(common::call(app.clone(), w).await.0, StatusCode::FORBIDDEN);
+
+    // Read is allowed by policy (404 because the secret is absent, not 403).
+    let r = axum::http::Request::builder()
+        .method("GET").uri("/secret/data/app/db")
+        .header("X-Vault-Token", &tok)
+        .body(axum::body::Body::empty())
+        .unwrap();
+    assert_eq!(common::call(app, r).await.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn child_token_cannot_escalate_policies() {
+    let app = app();
+    // A reader token tries to mint a root child — the delegated policy is
+    // filtered down (no escalation), so the child still cannot write.
+    let (_s, body) = common::call(
+        app.clone(),
+        ns_req("POST", "/auth/token/create", None, json!({"policies": ["reader"]})),
+    ).await;
+    let reader = body["auth"]["client_token"].as_str().unwrap().to_string();
+
+    let esc = axum::http::Request::builder()
+        .method("POST").uri("/auth/token/create")
+        .header("X-Vault-Token", &reader)
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(serde_json::to_vec(&json!({"policies": ["root"]})).unwrap()))
+        .unwrap();
+    let (_s, body2) = common::call(app.clone(), esc).await;
+    let child = body2["auth"]["client_token"].as_str().unwrap().to_string();
+
+    // The escalated child still cannot write.
+    let w = axum::http::Request::builder()
+        .method("POST").uri("/secret/data/x")
+        .header("X-Vault-Token", &child)
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(serde_json::to_vec(&json!({"data": {"a": "b"}})).unwrap()))
+        .unwrap();
+    assert_eq!(common::call(app, w).await.0, StatusCode::FORBIDDEN);
+}

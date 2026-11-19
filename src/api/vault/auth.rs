@@ -23,6 +23,8 @@ pub struct VaultClaims {
     pub token_ns: String,
     /// Namespace this request resolved to ("" = root). Set by `resolve_namespace`.
     pub namespace: String,
+    /// Policies this token carries, used for per-path capability checks.
+    pub policies: Vec<String>,
 }
 
 /// Shared state available to vault handlers
@@ -78,7 +80,7 @@ pub async fn authenticate_token(state: &VaultState, token: &str) -> Option<Vault
     if token.is_empty() {
         return None;
     }
-    // Dev root token
+    // Dev root token — full access.
     if let Some(ref root) = state.dev_root_token {
         if token == root {
             return Some(VaultClaims {
@@ -88,12 +90,15 @@ pub async fn authenticate_token(state: &VaultState, token: &str) -> Option<Vault
                 api_key: None,
                 token_ns: String::new(),
                 namespace: String::new(),
+                policies: vec!["root".to_string()],
             });
         }
     }
-    // JWT child token (issued by /auth/token/create or human login)
+    // JWT child token (issued by /auth/token/create or human login) — the token's
+    // roles/policies claim governs what it can do.
     if let Ok(jwt) = state.sessions.validate(token) {
         if let Ok(org_id) = Uuid::parse_str(&jwt.org) {
+            let policies = if jwt.roles.is_empty() { vec!["default".to_string()] } else { jwt.roles.clone() };
             return Some(VaultClaims {
                 token: token.to_string(),
                 org_id,
@@ -101,12 +106,14 @@ pub async fn authenticate_token(state: &VaultState, token: &str) -> Option<Vault
                 api_key: None,
                 token_ns: jwt.ns.clone(),
                 namespace: String::new(),
+                policies,
             });
         }
     }
-    // API key (Postgres only)
+    // API key (Postgres only) — the key's role becomes its policy.
     if let Some(ref pool) = state.pg_pool {
         if let Ok(resolved) = crate::api::native::keys::resolve_api_key(pool, token).await {
+            let policies = vec![resolved.role.clone().unwrap_or_else(|| "default".to_string())];
             return Some(VaultClaims {
                 token: token.to_string(),
                 org_id: resolved.org_id,
@@ -114,6 +121,7 @@ pub async fn authenticate_token(state: &VaultState, token: &str) -> Option<Vault
                 api_key: None,
                 token_ns: String::new(),
                 namespace: String::new(),
+                policies,
             });
         }
     }
@@ -199,6 +207,58 @@ pub async fn cookie_logout(headers: HeaderMap) -> Response {
         resp.headers_mut().insert(SET_COOKIE, cookie);
     }
     resp
+}
+
+// ── Policy enforcement ────────────────────────────────────────────────────────
+
+/// Middleware (runs after auth + namespace resolution): enforce the token's
+/// policies for the KV operation implied by the method and path. `sys/*` and
+/// `auth/*` routes are not path-gated (authentication already being required),
+/// and `token/create` separately restricts delegated policies to a subset.
+pub async fn enforce_policy(req: Request, next: Next) -> Response {
+    use crate::auth::policy::{allows, Capability};
+
+    let Some(claims) = req.extensions().get::<VaultClaims>().cloned() else {
+        return crate::api::vault::error::VaultError::resp(StatusCode::FORBIDDEN, "invalid token");
+    };
+
+    let method = req.method().as_str().to_string();
+    let path = req.uri().path().to_string();
+    let is_list = req.uri().query().map(|q| q.contains("list=true")).unwrap_or(false);
+    let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+
+    if segs.len() >= 2 {
+        let mount = segs[0];
+        let op = segs[1];
+        let rest = segs.get(2..).map(|s| s.join("/")).unwrap_or_default();
+        let target = format!("{mount}/{rest}");
+
+        let cap = match (op, method.as_str()) {
+            ("data", "GET") => Some(Capability::Read),
+            ("data", "POST") | ("data", "PUT") => Some(Capability::Update),
+            ("data", "DELETE") => Some(Capability::Delete),
+            ("delete", "POST") => Some(Capability::Delete),
+            ("undelete", "POST") => Some(Capability::Update),
+            ("destroy", "PUT") | ("destroy", "POST") => Some(Capability::Destroy),
+            ("metadata", "GET") => {
+                if is_list || rest.is_empty() { Some(Capability::List) } else { Some(Capability::Read) }
+            }
+            ("metadata", "POST") | ("metadata", "PUT") => Some(Capability::Read),
+            ("metadata", "DELETE") => Some(Capability::Delete),
+            _ => None, // sys/*, auth/*, unknown → no path gate
+        };
+
+        if let Some(cap) = cap {
+            if !allows(&claims.policies, &target, cap) {
+                return crate::api::vault::error::VaultError::resp(
+                    StatusCode::FORBIDDEN,
+                    "permission denied: token policy does not allow this operation",
+                );
+            }
+        }
+    }
+
+    next.run(req).await
 }
 
 // ── Namespaces ───────────────────────────────────────────────────────────────

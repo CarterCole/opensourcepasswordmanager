@@ -34,9 +34,6 @@ itself.
 
 These are documented so operators can make informed decisions:
 
-- **Least-privilege within a tenant is coarse.** Any valid vault token can
-  read/write within its org + namespace; fine-grained per-path policies are not
-  enforced yet. Admin-tier actions (key/user management) *are* gated by role.
 - **Passkey / WebAuthn 2FA is a stub.** TOTP 2FA is implemented; WebAuthn is not
   wired up yet.
 - **Rate limiting is per-instance and in-memory.** The built-in auth throttle
@@ -45,6 +42,11 @@ These are documented so operators can make informed decisions:
 
 ## Recently hardened
 
+- **Per-path token policies** are now enforced on the KV API. A token carries
+  policies (built-ins `root`/`owner`/`admin`, `developer`, `reader`/`default`,
+  or inline `"read,list,update secret/app/*"` rules), and every KV read/write/
+  delete/destroy/list is checked against them. `token/create` restricts a child
+  token's policies to a subset of the parent's, preventing privilege escalation.
 - **TOTP 2FA** (RFC 6238) with single-use backup codes; login enforces the
   second factor for enrolled accounts. The TOTP seed is stored encrypted.
 - **Web session uses an httpOnly, `SameSite=Strict` cookie** set by the server

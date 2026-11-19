@@ -229,10 +229,26 @@ pub async fn token_create(
         .and_then(|s| s.trim_end_matches('s').parse::<i64>().ok())
         .unwrap_or(3600);
 
-    let policies = if req.policies.is_empty() {
+    let requested = if req.policies.is_empty() {
         vec!["default".to_string()]
     } else {
         req.policies.clone()
+    };
+
+    // Prevent privilege escalation: a non-root token may only delegate policies
+    // it already holds. Root tokens (dev token, owner/admin) may delegate freely.
+    let policies = if crate::auth::policy::is_root(&claims.policies) {
+        requested
+    } else {
+        let subset: Vec<String> = requested
+            .into_iter()
+            .filter(|p| claims.policies.contains(p))
+            .collect();
+        if subset.is_empty() {
+            vec!["default".to_string()]
+        } else {
+            subset
+        }
     };
 
     let user_id = claims.user_id.unwrap_or_else(Uuid::new_v4);
