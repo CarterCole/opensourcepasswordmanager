@@ -38,6 +38,16 @@ pub struct AuthConfig {
     /// OIDC providers (Okta, GitHub, Google, etc.), zero or more.
     #[serde(default)]
     pub oidc: Vec<OidcConfig>,
+
+    /// WebAuthn relying-party id (the site's registrable domain, e.g.
+    /// "secretd.example.com" or "localhost"). Passkeys are disabled unless set.
+    #[serde(default)]
+    pub rp_id: Option<String>,
+
+    /// WebAuthn origin, the full URL the UI is served from
+    /// (e.g. "https://secretd.example.com"). Required for passkeys.
+    #[serde(default)]
+    pub rp_origin: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -123,6 +133,8 @@ impl Config {
                     .unwrap_or(false),
                 ldap: None,  // configured via TOML only (too many fields for env)
                 oidc: vec![], // configured via TOML only
+                rp_id: std::env::var("SECRETD_RP_ID").ok(),
+                rp_origin: std::env::var("SECRETD_RP_ORIGIN").ok(),
             },
         })
     }

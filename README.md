@@ -24,7 +24,9 @@ you control.
 - **Pluggable storage** — PostgreSQL for production, SQLite for zero-Docker
   local use.
 - **Auth** — `sk_live_` API keys and HS256 JWT sessions, Argon2-hashed; optional
-  email+password, with role-based access control for admin actions.
+  email+password with **TOTP 2FA** (backup codes) and **WebAuthn passkeys**;
+  role-based access for admin actions and **per-path token policies** on the KV
+  API. The web UI uses an httpOnly, `SameSite=Strict` session cookie.
 - **Web UI** — a small React dashboard for browsing and editing secrets.
 
 ## Quick start (no Docker)

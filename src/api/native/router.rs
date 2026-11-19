@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use crate::auth::{manager::AuthManager, session::SessionService};
 use crate::config::Config;
-use super::{auth, keys, totp, users};
+use super::{auth, keys, passkey, totp, users};
 
 #[derive(Clone)]
 pub struct NativeState {
@@ -23,6 +23,8 @@ pub struct NativeState {
     pub config: Arc<Config>,
     /// Crypto engine — used to seal/open the TOTP secret at rest.
     pub crypto: Arc<crate::core::CryptoEngine>,
+    /// WebAuthn/passkey service (disabled unless RP id/origin configured).
+    pub passkey: Arc<crate::auth::PasskeyService>,
 }
 
 pub fn native_router(state: NativeState) -> Router {
@@ -47,13 +49,17 @@ pub fn native_router(state: NativeState) -> Router {
         .route("/auth/totp/enroll", post(totp::enroll))
         .route("/auth/totp/verify", post(totp::verify))
         .route("/auth/totp", delete(totp::disable))
+        .route("/auth/passkey/register/start", post(passkey::register_start))
+        .route("/auth/passkey/register/finish", post(passkey::register_finish))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     // Public routes — no auth needed
     let public = Router::new()
         .route("/auth/providers", get(auth::list_providers))
         .route("/auth/login",     post(auth::login))
-        .route("/auth/register",  post(auth::register));
+        .route("/auth/register",  post(auth::register))
+        .route("/auth/passkey/login/start",  post(passkey::login_start))
+        .route("/auth/passkey/login/finish", post(passkey::login_finish));
 
     Router::new()
         .nest("/api/v1", public.merge(authed).merge(admin))

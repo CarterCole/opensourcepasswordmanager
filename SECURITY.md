@@ -34,14 +34,21 @@ itself.
 
 These are documented so operators can make informed decisions:
 
-- **Passkey / WebAuthn 2FA is a stub.** TOTP 2FA is implemented; WebAuthn is not
-  wired up yet.
+- **WebAuthn ceremonies need browser verification.** Passkey registration and
+  login are implemented but, being an interactive FIDO2 ceremony, cannot be
+  exercised by the server-side test suite — validate them end-to-end in a
+  browser before relying on passkeys in production. Passkey ceremony state is
+  held in-memory, so it is single-instance for now.
 - **Rate limiting is per-instance and in-memory.** The built-in auth throttle
   does not coordinate across replicas; for multi-instance deployments add a
   shared limiter or a WAF / reverse proxy.
 
 ## Recently hardened
 
+- **WebAuthn / passkey authentication** (via `webauthn-rs`): registration for
+  signed-in users and passwordless passkey login. Opt-in — enabled only when
+  `SECRETD_RP_ID` and `SECRETD_RP_ORIGIN` are configured; disabled (501)
+  otherwise. Credentials are stored per user; ceremony challenges expire.
 - **Per-path token policies** are now enforced on the KV API. A token carries
   policies (built-ins `root`/`owner`/`admin`, `developer`, `reader`/`default`,
   or inline `"read,list,update secret/app/*"` rules), and every KV read/write/

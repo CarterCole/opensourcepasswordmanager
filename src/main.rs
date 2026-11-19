@@ -126,12 +126,20 @@ async fn main() -> Result<()> {
             auth_mgr.register(auth::email::EmailPasswordProvider);
         }
         let cfg = Arc::new(cfg);
+        let passkey = Arc::new(auth::PasskeyService::from_config(
+            cfg.auth.rp_id.as_deref(),
+            cfg.auth.rp_origin.as_deref(),
+        ));
+        if passkey.enabled() {
+            tracing::info!("WebAuthn/passkeys enabled");
+        }
         let native_state = api::native::router::NativeState {
             pool: pool.clone(),
             sessions: sessions.clone(),
             auth_manager: Arc::new(auth_mgr),
             config: cfg,
             crypto: crypto.clone(),
+            passkey,
         };
         app = app.merge(api::native::native_router(native_state));
         tracing::info!("native API mounted at /api/v1/");

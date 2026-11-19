@@ -16,6 +16,15 @@ listen = "0.0.0.0:8200"
 # REQUIRED. Generate with: openssl rand -base64 48
 jwt_secret = "<openssl rand -base64 48>"
 
+[auth]
+# Enable email+password login (also: SECRETD_AUTH_EMAIL=true)
+# email = true
+#
+# WebAuthn / passkeys — set both to enable (also: SECRETD_RP_ID, SECRETD_RP_ORIGIN).
+# rp_id is the registrable domain; rp_origin is the full URL the UI is served from.
+# rp_id = "secretd.example.com"
+# rp_origin = "https://secretd.example.com"
+
 [storage]
 # postgres | sqlite | redis
 backend = "postgres"
