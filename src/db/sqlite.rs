@@ -145,7 +145,8 @@ impl SecretBackend for SqliteBackend {
                         sv.created_at as v_ca, sv.created_by, sv.deleted_at as v_da, sv.destroyed_at,
                         dk.encrypted_dek
                  FROM secrets s
-                 JOIN secret_versions sv ON sv.secret_id = s.id AND sv.version_num = ? AND sv.destroyed_at IS NULL
+                 JOIN secret_versions sv ON sv.secret_id = s.id AND sv.version_num = ?
+                      AND sv.deleted_at IS NULL AND sv.destroyed_at IS NULL
                  JOIN data_encryption_keys dk ON dk.id = sv.dek_id
                  WHERE s.environment_id = ? AND s.path = ? AND s.name = ? AND s.deleted_at IS NULL",
             )

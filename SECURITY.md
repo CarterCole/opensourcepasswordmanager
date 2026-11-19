@@ -34,13 +34,6 @@ itself.
 
 These are documented so operators can make informed decisions:
 
-- **Cross-tenant isolation on the cloud-compat shims is incomplete.** The
-  AWS/GCP/Azure/Bitwarden/Cloudflare compatibility endpoints currently operate
-  against the default environment and do not yet scope by the caller's
-  organization. Treat a single deployment as single-tenant for now.
-- **No login rate-limiting / lockout.** Brute-force protection on
-  `/api/v1/auth/login` is not yet implemented; put it behind a rate-limiting
-  proxy.
 - **Least-privilege within a tenant is coarse.** Any valid vault token can
   read/write within its org + namespace; fine-grained per-path policies are not
   enforced yet. Admin-tier actions (key/user management) *are* gated by role.
@@ -48,8 +41,19 @@ These are documented so operators can make informed decisions:
   by any XSS on the origin. Serve the UI from a trusted origin with a strict CSP.
 - **TOTP / passkey 2FA are stubs.** `two_fa_verified` is asserted but no second
   factor is actually verified yet.
-- **SQLite backend** is intended for demo/zero-Docker use and has had less
-  hardening than the PostgreSQL backend (e.g. soft-delete visibility differs).
+- **Rate limiting is per-instance and in-memory.** The built-in auth throttle
+  does not coordinate across replicas; for multi-instance deployments add a
+  shared limiter or a WAF / reverse proxy.
+
+## Recently hardened
+
+- Cloud-compat shims (AWS/GCP/Azure/Bitwarden/Cloudflare) now reject credentials
+  that do not belong to the shim's organization, closing a cross-tenant access
+  path.
+- Online password guessing is throttled on `/api/v1/auth/login` and
+  `/api/v1/auth/register` (fixed-window attempt counter with lockout).
+- The SQLite backend no longer serves soft-deleted secret versions, matching the
+  PostgreSQL backend.
 
 ## Supported versions
 

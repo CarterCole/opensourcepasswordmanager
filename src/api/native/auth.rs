@@ -28,12 +28,26 @@ pub async fn login(
     State(s): State<NativeState>,
     Json(body): Json<LoginRequest>,
 ) -> impl IntoResponse {
+    // Throttle online guessing, keyed by provider + login identifier.
+    let identifier = body.credentials.get("email").and_then(|v| v.as_str()).unwrap_or("");
+    let rl_key = format!("login:{}:{}", body.provider, identifier);
+    if let Err(retry) = super::ratelimit::check_and_record(&rl_key) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [("Retry-After", retry.to_string())],
+            Json(json!({"error": "too many attempts; try again later"})),
+        )
+            .into_response();
+    }
+
     let user = match s.auth_manager.authenticate(&body.provider, &body.credentials, &s.pool).await {
         Ok(u) => u,
         Err(e) => {
             return (StatusCode::UNAUTHORIZED, Json(json!({"error": e.to_string()}))).into_response();
         }
     };
+    // Successful auth — clear the throttle for this identifier.
+    super::ratelimit::reset(&rl_key);
 
     let org_id = user.org_id;
     let user_id = match user.user_id {
@@ -119,6 +133,17 @@ pub async fn register(
     // Only allow if email auth is enabled in config
     if !s.config.auth.email {
         return (StatusCode::NOT_FOUND, Json(json!({"error": "email auth not enabled"}))).into_response();
+    }
+
+    // Throttle registration attempts by email to limit abuse of the endpoint.
+    let rl_key = format!("register:{}", body.email);
+    if let Err(retry) = super::ratelimit::check_and_record(&rl_key) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [("Retry-After", retry.to_string())],
+            Json(json!({"error": "too many attempts; try again later"})),
+        )
+            .into_response();
     }
 
     let hash = match crate::auth::apikey::ApiKeyService::hash(&body.password) {

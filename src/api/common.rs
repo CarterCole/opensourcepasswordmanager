@@ -53,19 +53,27 @@ pub async fn require_auth(state: &AppState, headers: &HeaderMap) -> Result<(), S
         return Err(StatusCode::FORBIDDEN);
     }
 
+    // The cloud-compat shims all operate on the default organization's default
+    // environment, so a credential is only accepted when it belongs to that org.
+    // This stops a token issued for another org from reaching these secrets.
     for token in &candidates {
-        // Dev root token (only set when explicitly configured)
+        // Dev root token (only set when explicitly configured) — the default-org root.
         if state.dev_root_token.as_deref() == Some(token.as_str()) {
             return Ok(());
         }
-        // JWT session token
-        if state.sessions.validate(token).is_ok() {
-            return Ok(());
-        }
-        // API key (Postgres only)
-        if let Some(ref pool) = state.pg_pool {
-            if crate::api::native::keys::resolve_api_key(pool, token).await.is_ok() {
+        // JWT session token — must be scoped to the default org.
+        if let Ok(claims) = state.sessions.validate(token) {
+            if uuid::Uuid::parse_str(&claims.org) == Ok(state.default_org_id) {
                 return Ok(());
+            }
+            continue;
+        }
+        // API key (Postgres only) — must belong to the default org.
+        if let Some(ref pool) = state.pg_pool {
+            if let Ok(resolved) = crate::api::native::keys::resolve_api_key(pool, token).await {
+                if resolved.org_id == state.default_org_id {
+                    return Ok(());
+                }
             }
         }
     }
