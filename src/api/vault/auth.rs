@@ -1,10 +1,13 @@
 //! Vault token authentication middleware.
 use axum::{
     extract::{Request, State},
-    http::{HeaderMap, StatusCode},
+    http::{header::SET_COOKIE, HeaderMap, HeaderValue, StatusCode},
     middleware::Next,
-    response::Response,
+    response::{IntoResponse, Response},
+    Json,
 };
+use serde::Deserialize;
+use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
 use crate::db::ApiKey;
@@ -37,15 +40,87 @@ pub struct VaultState {
     pub sessions: Arc<crate::auth::SessionService>,
 }
 
+/// Name of the httpOnly session cookie set by the web UI login.
+pub const SESSION_COOKIE: &str = "secretd_token";
+
 pub fn extract_vault_token(headers: &HeaderMap) -> Option<String> {
-    headers
+    // Header-based clients (SDKs, CLI) first.
+    if let Some(v) = headers
         .get("X-Vault-Token")
         .or_else(|| headers.get("Authorization"))
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.trim_start_matches("Bearer ").to_string())
+    {
+        let t = v.trim_start_matches("Bearer ").trim();
+        if !t.is_empty() {
+            return Some(t.to_string());
+        }
+    }
+    // Browser clients: the httpOnly session cookie.
+    cookie_value(headers, SESSION_COOKIE)
 }
 
-/// Middleware: require a valid X-Vault-Token or Bearer token
+/// Read a single cookie value out of the `Cookie` request header.
+pub fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    let raw = headers.get(axum::http::header::COOKIE)?.to_str().ok()?;
+    for part in raw.split(';') {
+        if let Some((k, v)) = part.trim().split_once('=') {
+            if k == name {
+                return Some(v.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Validate a raw token and, if accepted, return the claims it grants.
+/// Shared by the auth middleware and the cookie-login endpoint.
+pub async fn authenticate_token(state: &VaultState, token: &str) -> Option<VaultClaims> {
+    if token.is_empty() {
+        return None;
+    }
+    // Dev root token
+    if let Some(ref root) = state.dev_root_token {
+        if token == root {
+            return Some(VaultClaims {
+                token: token.to_string(),
+                org_id: state.default_org_id,
+                user_id: None,
+                api_key: None,
+                token_ns: String::new(),
+                namespace: String::new(),
+            });
+        }
+    }
+    // JWT child token (issued by /auth/token/create or human login)
+    if let Ok(jwt) = state.sessions.validate(token) {
+        if let Ok(org_id) = Uuid::parse_str(&jwt.org) {
+            return Some(VaultClaims {
+                token: token.to_string(),
+                org_id,
+                user_id: Uuid::parse_str(&jwt.sub).ok(),
+                api_key: None,
+                token_ns: jwt.ns.clone(),
+                namespace: String::new(),
+            });
+        }
+    }
+    // API key (Postgres only)
+    if let Some(ref pool) = state.pg_pool {
+        if let Ok(resolved) = crate::api::native::keys::resolve_api_key(pool, token).await {
+            return Some(VaultClaims {
+                token: token.to_string(),
+                org_id: resolved.org_id,
+                user_id: Some(resolved.key_id),
+                api_key: None,
+                token_ns: String::new(),
+                namespace: String::new(),
+            });
+        }
+    }
+    None
+}
+
+/// Middleware: require a valid token (header or session cookie).
 pub async fn require_vault_token(
     State(state): State<VaultState>,
     mut req: Request,
@@ -61,52 +136,69 @@ pub async fn require_vault_token(
         }
     };
 
-    // Dev root token — always accepted
-    if let Some(ref root) = state.dev_root_token {
-        if &token == root {
-            req.extensions_mut().insert(VaultClaims {
-                token,
-                org_id: state.default_org_id,
-                user_id: None,
-                api_key: None,
-                token_ns: String::new(),
-                namespace: String::new(),
-            });
-            return next.run(req).await;
+    match authenticate_token(&state, &token).await {
+        Some(claims) => {
+            req.extensions_mut().insert(claims);
+            next.run(req).await
         }
+        None => crate::api::vault::error::VaultError::resp(StatusCode::FORBIDDEN, "invalid token"),
     }
+}
 
-    // JWT child token (issued by /auth/token/create)
-    if let Ok(jwt) = state.sessions.validate(&token) {
-        if let Ok(org_id) = Uuid::parse_str(&jwt.org) {
-            req.extensions_mut().insert(VaultClaims {
-                token,
-                org_id,
-                user_id: Uuid::parse_str(&jwt.sub).ok(),
-                api_key: None,
-                token_ns: jwt.ns.clone(),
-                namespace: String::new(),
-            });
-            return next.run(req).await;
-        }
+// ── Cookie session (web UI) ──────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct CookieLoginBody {
+    pub token: String,
+}
+
+/// True when the original request reached us over HTTPS (directly or via a
+/// TLS-terminating proxy that sets `X-Forwarded-Proto`).
+fn request_is_https(headers: &HeaderMap) -> bool {
+    headers
+        .get("X-Forwarded-Proto")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("https"))
+        .unwrap_or(false)
+}
+
+fn session_cookie(token: &str, max_age: u32, secure: bool) -> Option<HeaderValue> {
+    // HttpOnly: unreadable by JS (defeats XSS token theft).
+    // SameSite=Strict: never sent on cross-site requests (CSRF defence).
+    let mut c = format!("{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}");
+    if secure {
+        c.push_str("; Secure");
     }
+    HeaderValue::from_str(&c).ok()
+}
 
-    // API key (Postgres only)
-    if let Some(ref pool) = state.pg_pool {
-        if let Ok(resolved) = crate::api::native::keys::resolve_api_key(pool, &token).await {
-            req.extensions_mut().insert(VaultClaims {
-                token,
-                org_id: resolved.org_id,
-                user_id: Some(resolved.key_id),
-                api_key: None,
-                token_ns: String::new(),
-                namespace: String::new(),
-            });
-            return next.run(req).await;
-        }
+/// POST /v1/auth/cookie/login — exchange a token for an httpOnly session cookie.
+/// The browser then authenticates by cookie, so the token never touches JS
+/// storage. The token is validated here before any cookie is set.
+pub async fn cookie_login(
+    State(state): State<VaultState>,
+    headers: HeaderMap,
+    Json(body): Json<CookieLoginBody>,
+) -> Response {
+    let token = body.token.trim();
+    if authenticate_token(&state, token).await.is_none() {
+        return crate::api::vault::error::VaultError::resp(StatusCode::UNAUTHORIZED, "invalid token");
     }
+    let Some(cookie) = session_cookie(token, 604800, request_is_https(&headers)) else {
+        return crate::api::vault::error::VaultError::resp(StatusCode::BAD_REQUEST, "token not storable in a cookie");
+    };
+    let mut resp = Json(json!({ "ok": true })).into_response();
+    resp.headers_mut().insert(SET_COOKIE, cookie);
+    resp
+}
 
-    crate::api::vault::error::VaultError::resp(StatusCode::FORBIDDEN, "invalid token")
+/// POST /v1/auth/cookie/logout — clear the session cookie.
+pub async fn cookie_logout(headers: HeaderMap) -> Response {
+    let mut resp = Json(json!({ "ok": true })).into_response();
+    if let Some(cookie) = session_cookie("", 0, request_is_https(&headers)) {
+        resp.headers_mut().insert(SET_COOKIE, cookie);
+    }
+    resp
 }
 
 // ── Namespaces ───────────────────────────────────────────────────────────────

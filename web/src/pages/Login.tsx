@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Lock, ArrowRight, AlertCircle } from 'lucide-react'
-import { checkHealth } from '../api/client'
+import { cookieLogin } from '../api/client'
 
 export default function Login() {
   const [token, setToken] = useState('')
@@ -17,12 +17,10 @@ export default function Login() {
     setError('')
 
     try {
-      localStorage.setItem('secretd_token', token.trim())
-      await checkHealth()
+      await cookieLogin(token.trim())
       navigate('/secrets')
     } catch (err) {
-      localStorage.removeItem('secretd_token')
-      setError('Could not connect to secretd. Check the server is running and the token is valid.')
+      setError('Invalid token, or the server is unreachable. Check the server is running and the token is valid.')
     } finally {
       setLoading(false)
     }

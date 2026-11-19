@@ -37,16 +37,20 @@ These are documented so operators can make informed decisions:
 - **Least-privilege within a tenant is coarse.** Any valid vault token can
   read/write within its org + namespace; fine-grained per-path policies are not
   enforced yet. Admin-tier actions (key/user management) *are* gated by role.
-- **Web UI stores its session token in `localStorage`**, which is exfiltratable
-  by any XSS on the origin. Serve the UI from a trusted origin with a strict CSP.
-- **TOTP / passkey 2FA are stubs.** `two_fa_verified` is asserted but no second
-  factor is actually verified yet.
+- **Passkey / WebAuthn 2FA is a stub.** TOTP 2FA is implemented; WebAuthn is not
+  wired up yet.
 - **Rate limiting is per-instance and in-memory.** The built-in auth throttle
   does not coordinate across replicas; for multi-instance deployments add a
   shared limiter or a WAF / reverse proxy.
 
 ## Recently hardened
 
+- **TOTP 2FA** (RFC 6238) with single-use backup codes; login enforces the
+  second factor for enrolled accounts. The TOTP seed is stored encrypted.
+- **Web session uses an httpOnly, `SameSite=Strict` cookie** set by the server
+  at login, instead of `localStorage`. The token is no longer readable by JS, so
+  an XSS cannot exfiltrate it, and `SameSite=Strict` defends against CSRF. Set
+  `X-Forwarded-Proto: https` (any TLS proxy does) to get the `Secure` attribute.
 - Cloud-compat shims (AWS/GCP/Azure/Bitwarden/Cloudflare) now reject credentials
   that do not belong to the shim's organization, closing a cross-tenant access
   path.

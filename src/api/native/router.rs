@@ -88,14 +88,19 @@ async fn require_auth(
     mut req: Request,
     next: Next,
 ) -> Response {
-    let bearer = req.headers()
+    let token = req.headers()
         .get("Authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .map(str::to_string);
+        .map(str::to_string)
+        // Browser clients authenticate via the httpOnly session cookie.
+        .or_else(|| crate::api::vault::auth::cookie_value(
+            req.headers(),
+            crate::api::vault::auth::SESSION_COOKIE,
+        ));
 
-    let Some(token) = bearer else {
-        return (StatusCode::UNAUTHORIZED, Json(json!({"error": "missing Authorization header"}))).into_response();
+    let Some(token) = token else {
+        return (StatusCode::UNAUTHORIZED, Json(json!({"error": "missing credentials"}))).into_response();
     };
 
     // API key path

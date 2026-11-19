@@ -7,6 +7,7 @@ import ApiKeys from './pages/ApiKeys'
 import Sync from './pages/Sync'
 import AuditLog from './pages/AuditLog'
 import { ToastProvider } from './components/Toast'
+import { isAuthed } from './api/client'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -18,8 +19,7 @@ const queryClient = new QueryClient({
 })
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  const token = localStorage.getItem('secretd_token')
-  if (!token) return <Navigate to="/login" replace />
+  if (!isAuthed()) return <Navigate to="/login" replace />
   return <>{children}</>
 }
 

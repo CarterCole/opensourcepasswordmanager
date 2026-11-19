@@ -1,19 +1,41 @@
 const BASE = ''
 
-function getToken(): string {
-  return localStorage.getItem('secretd_token') ?? ''
+// The session token lives in an httpOnly cookie the server sets at login, so it
+// is never readable by JS (XSS can't exfiltrate it). We keep only a
+// non-sensitive "are we logged in" flag in localStorage to drive routing.
+const AUTHED_FLAG = 'secretd_authed'
+
+export function isAuthed(): boolean {
+  try {
+    return localStorage.getItem(AUTHED_FLAG) === '1'
+  } catch {
+    return false
+  }
+}
+
+function setAuthed(v: boolean) {
+  try {
+    if (v) localStorage.setItem(AUTHED_FLAG, '1')
+    else localStorage.removeItem(AUTHED_FLAG)
+  } catch {
+    /* ignore storage errors (private mode, etc.) */
+  }
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = getToken()
   const res = await fetch(`${BASE}${path}`, {
     ...options,
+    credentials: 'include', // send the httpOnly session cookie
     headers: {
       'Content-Type': 'application/json',
-      'X-Vault-Token': token,
       ...(options.headers ?? {}),
     },
   })
+
+  if (res.status === 401 || res.status === 403) {
+    // Session is gone/invalid — drop the local flag so routing sends us to login.
+    setAuthed(false)
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText)
@@ -24,6 +46,33 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const text = await res.text()
   if (!text) return undefined as T
   return JSON.parse(text) as T
+}
+
+// ── Session ───────────────────────────────────────────────────────────────────
+
+/** Exchange a token for an httpOnly session cookie. Validated server-side. */
+export async function cookieLogin(token: string): Promise<void> {
+  const res = await fetch(`${BASE}/v1/auth/cookie/login`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  })
+  if (!res.ok) {
+    setAuthed(false)
+    throw new Error('Invalid token')
+  }
+  setAuthed(true)
+}
+
+/** Clear the session cookie and local flag. */
+export async function cookieLogout(): Promise<void> {
+  try {
+    await fetch(`${BASE}/v1/auth/cookie/logout`, { method: 'POST', credentials: 'include' })
+  } catch {
+    /* ignore network errors on logout */
+  }
+  setAuthed(false)
 }
 
 // ── Health ────────────────────────────────────────────────────────────────────

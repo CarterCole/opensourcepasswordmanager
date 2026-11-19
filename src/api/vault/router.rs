@@ -1,6 +1,6 @@
 //! Mounts the Vault KV v2 compatible router at /v1/
 use super::{
-    auth::{require_vault_token, resolve_namespace, VaultState},
+    auth::{cookie_login, cookie_logout, require_vault_token, resolve_namespace, VaultState},
     handlers,
 };
 use axum::{
@@ -43,11 +43,15 @@ pub fn vault_router(state: VaultState) -> Router {
     // Namespace resolution rewrites the URI, so it must wrap the whole router
     // (route-level layers run after matching). Auth runs first: namespaces are per-org.
     let ns_layer = middleware::from_fn_with_state(state.clone(), resolve_namespace);
-    let auth_layer = middleware::from_fn_with_state(state, require_vault_token);
+    let auth_layer = middleware::from_fn_with_state(state.clone(), require_vault_token);
     let protected = auth_layer.layer(ns_layer.layer(protected));
 
-    // Health check does not require auth (standard Vault behaviour)
+    // Unauthenticated routes: health, and the cookie-session login/logout used by
+    // the web UI (login validates the token before setting the cookie).
     Router::new()
         .route("/sys/health", get(handlers::health))
+        .route("/auth/cookie/login", post(cookie_login))
+        .route("/auth/cookie/logout", post(cookie_logout))
+        .with_state(state)
         .fallback_service(protected)
 }

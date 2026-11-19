@@ -396,3 +396,56 @@ async fn create_ns_at(app: &axum::Router, uri: &str) {
     let (s, _) = common::call(app.clone(), ns_req("POST", uri, None, json!({}))).await;
     assert_eq!(s, StatusCode::OK);
 }
+
+// ── cookie session (web UI) ───────────────────────────────────────────────────
+
+#[tokio::test]
+async fn cookie_login_accepts_valid_token() {
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/auth/cookie/login")
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(serde_json::to_vec(&json!({"token": "test-token"})).unwrap()))
+        .unwrap();
+    let (status, body) = common::call(app(), req).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], true);
+}
+
+#[tokio::test]
+async fn cookie_login_rejects_invalid_token() {
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/auth/cookie/login")
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(serde_json::to_vec(&json!({"token": "not-a-real-token"})).unwrap()))
+        .unwrap();
+    let (status, _body) = common::call(app(), req).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn protected_route_accepts_session_cookie() {
+    // A request bearing only the session cookie (no X-Vault-Token header) is
+    // authenticated — this is how the browser UI talks to the API.
+    let req = axum::http::Request::builder()
+        .method("GET")
+        .uri("/sys/mounts")
+        .header("Cookie", "secretd_token=test-token; other=ignored")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let (status, _body) = common::call(app(), req).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn protected_route_rejects_bad_session_cookie() {
+    let req = axum::http::Request::builder()
+        .method("GET")
+        .uri("/sys/mounts")
+        .header("Cookie", "secretd_token=wrong")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let (status, _body) = common::call(app(), req).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}

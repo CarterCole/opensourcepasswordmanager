@@ -3,6 +3,7 @@ import { Outlet, useLocation, useNavigate, Link } from 'react-router-dom'
 import { ChevronRight, LogOut } from 'lucide-react'
 import { Sidebar } from './Sidebar'
 import { useQueryClient } from '@tanstack/react-query'
+import { cookieLogout } from '../api/client'
 
 function Breadcrumb() {
   const location = useLocation()
@@ -40,7 +41,7 @@ export default function Layout() {
   const qc = useQueryClient()
 
   const handleLogout = () => {
-    localStorage.removeItem('secretd_token')
+    void cookieLogout()
     qc.clear()
     navigate('/login')
   }
