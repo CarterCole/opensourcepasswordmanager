@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use crate::auth::{manager::AuthManager, session::SessionService};
 use crate::config::Config;
-use super::{auth, keys, users};
+use super::{auth, keys, totp, users};
 
 #[derive(Clone)]
 pub struct NativeState {
@@ -21,6 +21,8 @@ pub struct NativeState {
     pub sessions: Arc<SessionService>,
     pub auth_manager: Arc<AuthManager>,
     pub config: Arc<Config>,
+    /// Crypto engine — used to seal/open the TOTP secret at rest.
+    pub crypto: Arc<crate::core::CryptoEngine>,
 }
 
 pub fn native_router(state: NativeState) -> Router {
@@ -38,8 +40,13 @@ pub fn native_router(state: NativeState) -> Router {
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     // Authenticated routes available to any valid token (no admin role required).
+    // Includes self-service 2FA management for the calling user.
     let authed = Router::new()
         .route("/auth/me", get(auth::me))
+        .route("/auth/totp/status", get(totp::status))
+        .route("/auth/totp/enroll", post(totp::enroll))
+        .route("/auth/totp/verify", post(totp::verify))
+        .route("/auth/totp", delete(totp::disable))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     // Public routes — no auth needed

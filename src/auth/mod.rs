@@ -11,3 +11,4 @@ pub mod totp;
 pub use apikey::ApiKeyService;
 pub use manager::AuthManager;
 pub use session::{Claims, SessionService};
+pub use totp::{BackupCodes, TotpService};

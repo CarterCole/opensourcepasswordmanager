@@ -61,6 +61,25 @@ pub async fn login(
         }
     };
 
+    // Second factor: if the account has TOTP enabled, require a valid TOTP code
+    // or a single-use backup code before issuing a session.
+    match enforce_totp(&s, user_id, &user.email, &body.credentials).await {
+        TotpOutcome::Ok => {}
+        TotpOutcome::Required => {
+            return (StatusCode::UNAUTHORIZED, Json(json!({
+                "error": "totp_required",
+                "mfa_required": true,
+                "detail": "resubmit with a 'totp' field containing your 6-digit code or a backup code",
+            }))).into_response();
+        }
+        TotpOutcome::Invalid => {
+            return (StatusCode::UNAUTHORIZED, Json(json!({"error": "invalid_totp"}))).into_response();
+        }
+        TotpOutcome::Error(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))).into_response();
+        }
+    }
+
     let roles = fetch_roles(&s.pool, user_id, org_id).await.unwrap_or_default();
     let token = s.sessions.issue(user_id, org_id, &user.email, roles, true, 86400 * 7);
 
@@ -68,6 +87,69 @@ pub async fn login(
         Ok(t) => Json(json!({ "token": t, "token_type": "Bearer" })).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
     }
+}
+
+enum TotpOutcome {
+    Ok,
+    Required,
+    Invalid,
+    Error(String),
+}
+
+/// Verify the second factor for `user_id`. Returns `Ok` when 2FA is not enabled
+/// or the supplied code is valid; consumes a backup code if one is used.
+async fn enforce_totp(
+    s: &NativeState,
+    user_id: Uuid,
+    email: &str,
+    credentials: &serde_json::Value,
+) -> TotpOutcome {
+    let row = match sqlx::query(
+        "SELECT totp_enrolled_at, totp_secret_encrypted, backup_codes_hash FROM users WHERE id = $1",
+    ).bind(user_id).fetch_optional(&s.pool).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return TotpOutcome::Ok,
+        Err(e) => return TotpOutcome::Error(e.to_string()),
+    };
+
+    let enrolled = row
+        .try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("totp_enrolled_at")
+        .ok().flatten().is_some();
+    if !enrolled {
+        return TotpOutcome::Ok;
+    }
+
+    let code = credentials.get("totp").or_else(|| credentials.get("code"))
+        .and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    if code.is_empty() {
+        return TotpOutcome::Required;
+    }
+
+    let sealed: Option<Vec<u8>> = row.try_get("totp_secret_encrypted").ok().flatten();
+    let secret = sealed
+        .and_then(|b| s.crypto.open(&b).ok())
+        .and_then(|b| String::from_utf8(b).ok());
+    if let Some(secret) = secret {
+        if crate::auth::TotpService::verify(&secret, &code, email) {
+            return TotpOutcome::Ok;
+        }
+    }
+
+    // Fall back to a one-time backup code.
+    let hashes: Vec<String> = row
+        .try_get::<Option<serde_json::Value>, _>("backup_codes_hash").ok().flatten()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    if let Some(idx) = crate::auth::BackupCodes::consume(&code, &hashes) {
+        let mut remaining = hashes;
+        remaining.remove(idx);
+        let json = serde_json::to_value(&remaining).unwrap_or(json!([]));
+        let _ = sqlx::query("UPDATE users SET backup_codes_hash = $1 WHERE id = $2")
+            .bind(json).bind(user_id).execute(&s.pool).await;
+        return TotpOutcome::Ok;
+    }
+
+    TotpOutcome::Invalid
 }
 
 async fn upsert_user(pool: &sqlx::PgPool, user: &crate::auth::provider::AuthUser) -> anyhow::Result<Uuid> {

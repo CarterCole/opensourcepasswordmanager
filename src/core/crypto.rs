@@ -99,6 +99,30 @@ impl CryptoEngine {
             .decrypt(Nonce::from_slice(data_nonce), ciphertext)
             .map_err(|_| anyhow::anyhow!("failed to decrypt value"))
     }
+
+    /// Directly encrypt a small value under the KEK (no per-value DEK). Returns a
+    /// self-contained blob `[12-byte nonce][AES-256-GCM ciphertext]`, suitable for
+    /// single-column storage of config-sized secrets such as a TOTP seed.
+    pub fn seal(&self, plaintext: &[u8]) -> Result<Vec<u8>> {
+        let nonce = Aes256Gcm::generate_nonce(OsRng);
+        let ciphertext = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&self.kek))
+            .encrypt(&nonce, plaintext)
+            .map_err(|e| anyhow::anyhow!("seal: {e}"))?;
+        let mut out = nonce.to_vec();
+        out.extend_from_slice(&ciphertext);
+        Ok(out)
+    }
+
+    /// Inverse of [`seal`]. Input is `[12-byte nonce][ciphertext]`.
+    pub fn open(&self, blob: &[u8]) -> Result<Vec<u8>> {
+        if blob.len() < 12 {
+            bail!("sealed blob too short");
+        }
+        let (nonce, ciphertext) = blob.split_at(12);
+        Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&self.kek))
+            .decrypt(Nonce::from_slice(nonce), ciphertext)
+            .map_err(|_| anyhow::anyhow!("failed to open sealed blob — wrong key or corrupted data"))
+    }
 }
 
 #[cfg(test)]
@@ -155,6 +179,24 @@ mod tests {
         tampered[0] ^= 0xFF; // flip bits in the first byte
         let result = e.decrypt(&tampered, &ct.nonce, &ct.encrypted_dek);
         assert!(result.is_err(), "tampered ciphertext should fail to decrypt");
+    }
+
+    #[test]
+    fn seal_open_roundtrip() {
+        let e = test_engine();
+        let blob = e.seal(b"JBSWY3DPEHPK3PXP").unwrap();
+        assert_ne!(blob, b"JBSWY3DPEHPK3PXP");
+        let out = e.open(&blob).unwrap();
+        assert_eq!(out, b"JBSWY3DPEHPK3PXP");
+    }
+
+    #[test]
+    fn open_rejects_tampered_blob() {
+        let e = test_engine();
+        let mut blob = e.seal(b"totp-seed").unwrap();
+        let n = blob.len() - 1;
+        blob[n] ^= 0xFF;
+        assert!(e.open(&blob).is_err());
     }
 
     #[test]

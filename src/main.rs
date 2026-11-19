@@ -131,6 +131,7 @@ async fn main() -> Result<()> {
             sessions: sessions.clone(),
             auth_manager: Arc::new(auth_mgr),
             config: cfg,
+            crypto: crypto.clone(),
         };
         app = app.merge(api::native::native_router(native_state));
         tracing::info!("native API mounted at /api/v1/");
