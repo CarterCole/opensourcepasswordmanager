@@ -4,7 +4,7 @@ import { Lock, ArrowRight, AlertCircle } from 'lucide-react'
 import { checkHealth } from '../api/client'
 
 export default function Login() {
-  const [token, setToken] = useState('root-dev-token')
+  const [token, setToken] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const navigate = useNavigate()
@@ -55,7 +55,7 @@ export default function Login() {
                 type="password"
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
-                placeholder="root-dev-token"
+                placeholder="Paste your access token"
                 className="w-full bg-bg border border-border rounded-lg px-3 py-2.5 text-sm text-txt font-mono placeholder:text-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30 transition-colors"
                 autoFocus
                 autoComplete="current-password"

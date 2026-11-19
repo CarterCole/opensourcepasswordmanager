@@ -49,8 +49,13 @@ export interface MountInfo {
 
 export type MountsResponse = Record<string, MountInfo>
 
+interface MountsApiResponse {
+  request_id: string
+  data: MountsResponse
+}
+
 export function listMounts(): Promise<MountsResponse> {
-  return request<MountsResponse>('/v1/sys/mounts')
+  return request<MountsApiResponse>('/v1/sys/mounts').then((r) => r.data)
 }
 
 // ── Secrets ───────────────────────────────────────────────────────────────────
@@ -92,6 +97,52 @@ export function writeSecret(mount: string, path: string, data: Record<string, st
 export function deleteSecret(mount: string, path: string): Promise<unknown> {
   return request<unknown>(`/v1/${mount}/data/${path}`, {
     method: 'DELETE',
+  })
+}
+
+export interface VersionMeta {
+  created_time: string
+  deletion_time: string
+  destroyed: boolean
+  version: number
+}
+
+export interface SecretMetadata {
+  current_version: number
+  oldest_version: number
+  versions: Record<string, VersionMeta>
+}
+
+interface MetadataApiResponse {
+  data: SecretMetadata
+}
+
+export function readSecretMetadata(mount: string, path: string): Promise<SecretMetadata> {
+  return request<MetadataApiResponse>(`/v1/${mount}/metadata/${path}`).then((r) => r.data)
+}
+
+export function readSecretVersion(mount: string, path: string, version: number): Promise<SecretData> {
+  return request<SecretData>(`/v1/${mount}/data/${path}?version=${version}`)
+}
+
+export function softDeleteVersions(mount: string, path: string, versions: number[]): Promise<unknown> {
+  return request<unknown>(`/v1/${mount}/delete/${path}`, {
+    method: 'POST',
+    body: JSON.stringify({ versions }),
+  })
+}
+
+export function undeleteVersions(mount: string, path: string, versions: number[]): Promise<unknown> {
+  return request<unknown>(`/v1/${mount}/undelete/${path}`, {
+    method: 'POST',
+    body: JSON.stringify({ versions }),
+  })
+}
+
+export function destroyVersions(mount: string, path: string, versions: number[]): Promise<unknown> {
+  return request<unknown>(`/v1/${mount}/destroy/${path}`, {
+    method: 'PUT',
+    body: JSON.stringify({ versions }),
   })
 }
 

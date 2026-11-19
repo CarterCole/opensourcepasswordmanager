@@ -5,6 +5,16 @@ config.toml
 secretd.db
 secretd.db-shm
 secretd.db-wal
+# Demo-mode databases (demo.sh)
+secretd-demo.db
+secretd-demo.db-shm
+secretd-demo.db-wal
+*.db
+*.db-shm
+*.db-wal
+
+# Local agent/editor settings
+.claude/
 
 # Frontend build artifacts (baked into binary via embed-ui feature)
 web/node_modules/

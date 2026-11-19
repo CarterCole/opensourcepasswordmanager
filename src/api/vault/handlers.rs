@@ -53,7 +53,7 @@ pub async fn list_mounts(
     State(state): State<VaultState>,
     Extension(claims): Extension<VaultClaims>,
 ) -> Response {
-    let mounts = match state.db.list_vault_mounts(claims.org_id).await {
+    let mounts = match state.db.list_vault_mounts(claims.org_id, &claims.namespace).await {
         Ok(m) => m,
         Err(e) => return VaultError::internal(e.to_string()),
     };
@@ -85,6 +85,137 @@ pub async fn list_mounts(
     .into_response()
 }
 
+// ── sys/namespaces ───────────────────────────────────────────────────────────
+
+fn ns_json(ns: &crate::db::Namespace) -> Value {
+    serde_json::json!({
+        "id": ns.id.to_string().replace('-', "")[..5].to_string(),
+        "path": format!("{}/", ns.path),
+        "custom_metadata": {},
+    })
+}
+
+/// Validate a namespace path relative to the request namespace; returns the absolute path.
+fn abs_ns_path(claims: &VaultClaims, rel: &str) -> Result<String, Response> {
+    let rel = crate::api::vault::auth::normalize_ns(rel);
+    if rel.is_empty() {
+        return Err(VaultError::bad_request("missing namespace path"));
+    }
+    for seg in rel.split('/') {
+        let ok = seg.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+            && seg != "."
+            && seg != "..";
+        if !ok {
+            return Err(VaultError::bad_request(format!("invalid namespace name \"{seg}\"")));
+        }
+        if crate::api::vault::auth::RESERVED_NS_NAMES.contains(&seg) {
+            return Err(VaultError::bad_request(format!("\"{seg}\" is a reserved name")));
+        }
+    }
+    Ok(crate::api::vault::auth::join_ns(&claims.namespace, &rel))
+}
+
+fn is_direct_child(parent: &str, path: &str) -> bool {
+    let rest = if parent.is_empty() {
+        path
+    } else {
+        match path.strip_prefix(parent).and_then(|r| r.strip_prefix('/')) {
+            Some(r) => r,
+            None => return false,
+        }
+    };
+    !rest.is_empty() && !rest.contains('/')
+}
+
+pub async fn ns_list(
+    State(state): State<VaultState>,
+    Extension(claims): Extension<VaultClaims>,
+) -> Response {
+    let all = match state.db.list_namespaces(claims.org_id).await {
+        Ok(v) => v,
+        Err(e) => return VaultError::internal(e.to_string()),
+    };
+    let children: Vec<_> = all.iter().filter(|n| is_direct_child(&claims.namespace, &n.path)).collect();
+    if children.is_empty() {
+        return VaultError::not_found();
+    }
+    let prefix_len = if claims.namespace.is_empty() { 0 } else { claims.namespace.len() + 1 };
+    let mut keys = Vec::new();
+    let mut key_info = serde_json::Map::new();
+    for n in children {
+        let key = format!("{}/", &n.path[prefix_len..]);
+        key_info.insert(key.clone(), ns_json(n));
+        keys.push(key);
+    }
+    Json(VaultResponse::kv(serde_json::json!({ "keys": keys, "key_info": key_info }))).into_response()
+}
+
+pub async fn ns_read(
+    State(state): State<VaultState>,
+    Extension(claims): Extension<VaultClaims>,
+    Path(rel): Path<String>,
+) -> Response {
+    let path = match abs_ns_path(&claims, &rel) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    match state.db.get_namespace(claims.org_id, &path).await {
+        Ok(ns) => Json(VaultResponse::kv(ns_json(&ns))).into_response(),
+        Err(crate::db::DbError::NotFound) => VaultError::not_found(),
+        Err(e) => VaultError::internal(e.to_string()),
+    }
+}
+
+pub async fn ns_create(
+    State(state): State<VaultState>,
+    Extension(claims): Extension<VaultClaims>,
+    Path(rel): Path<String>,
+) -> Response {
+    let path = match abs_ns_path(&claims, &rel) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    // Nested creation is relative to the request namespace; intermediate
+    // namespaces must already exist (create_namespace checks the parent).
+    match state.db.create_namespace(claims.org_id, &path).await {
+        Ok(ns) => {
+            let _ = state.db.write_audit(
+                Some(claims.org_id), claims.user_id, "vault_token", None,
+                "namespace.create", Some("namespace"), Some(ns.id), Some(&ns.path),
+                None, serde_json::json!({}),
+            ).await;
+            Json(VaultResponse::kv(ns_json(&ns))).into_response()
+        }
+        Err(crate::db::DbError::Conflict(m)) => VaultError::bad_request(m),
+        Err(crate::db::DbError::NotFound) => VaultError::resp(StatusCode::NOT_FOUND, "parent namespace not found"),
+        Err(e) => VaultError::internal(e.to_string()),
+    }
+}
+
+pub async fn ns_delete(
+    State(state): State<VaultState>,
+    Extension(claims): Extension<VaultClaims>,
+    Path(rel): Path<String>,
+) -> Response {
+    let path = match abs_ns_path(&claims, &rel) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    match state.db.delete_namespace(claims.org_id, &path).await {
+        Ok(()) => {
+            let _ = state.db.write_audit(
+                Some(claims.org_id), claims.user_id, "vault_token", None,
+                "namespace.delete", Some("namespace"), None, Some(&path),
+                None, serde_json::json!({}),
+            ).await;
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(crate::db::DbError::Conflict(m)) => VaultError::bad_request(m),
+        Err(crate::db::DbError::NotFound) => VaultError::not_found(),
+        Err(e) => VaultError::internal(e.to_string()),
+    }
+}
+
 // ── auth/token/create ────────────────────────────────────────────────────────
 
 pub async fn token_create(
@@ -107,7 +238,7 @@ pub async fn token_create(
     let user_id = claims.user_id.unwrap_or_else(Uuid::new_v4);
     let child_token = state
         .sessions
-        .issue(user_id, claims.org_id, "", policies.clone(), true, ttl_seconds)
+        .issue_in_namespace(user_id, claims.org_id, "", policies.clone(), true, ttl_seconds, &claims.namespace)
         .unwrap_or_else(|_| claims.token.clone());
 
     Json(AuthResponse {
@@ -405,11 +536,51 @@ pub async fn kv_list(
     Path((mount, secret_path)): Path<(String, String)>,
     Query(q): Query<ListQuery>,
 ) -> Response {
-    // Support both LIST method and GET ?list=true
     let env_id = match resolve_env(&state, &claims, &mount).await {
         Ok(id) => id,
         Err(r) => return r,
     };
+
+    // GET ?list=true → folder listing; GET without list param → version metadata for a secret
+    if q.list.as_deref() != Some("true") {
+        let (folder, name) = split_kv_path(&secret_path);
+        let sv = match state.store.get(env_id, &folder, &name, None).await {
+            Ok(v) => v,
+            Err(e) if is_not_found(&e) => return VaultError::not_found(),
+            Err(e) => return VaultError::internal(e.to_string()),
+        };
+        let all_versions = match state.db.get_versions(sv.secret.id).await {
+            Ok(v) => v,
+            Err(e) => return VaultError::internal(e.to_string()),
+        };
+        let mut versions_map = HashMap::new();
+        for v in &all_versions {
+            versions_map.insert(
+                v.version_num.to_string(),
+                KvVersionMeta {
+                    created_time: v.created_at,
+                    custom_metadata: None,
+                    deletion_time: v.deleted_at.map(|t| t.to_rfc3339()).unwrap_or_default(),
+                    destroyed: v.destroyed_at.is_some(),
+                    version: v.version_num,
+                },
+            );
+        }
+        let current = all_versions.iter().map(|v| v.version_num).max().unwrap_or(0);
+        let oldest = all_versions.iter().map(|v| v.version_num).min().unwrap_or(0);
+        return Json(VaultResponse::kv(KvMetadataResponse {
+            cas_required: false,
+            created_time: sv.secret.created_at,
+            current_version: current,
+            custom_metadata: None,
+            delete_version_after: "0s".into(),
+            max_versions: 0,
+            oldest_version: oldest,
+            updated_time: sv.secret.updated_at,
+            versions: versions_map,
+        }))
+        .into_response();
+    }
 
     let base_path = if secret_path.is_empty() {
         "/".into()
@@ -424,6 +595,28 @@ pub async fn kv_list(
 
     let keys: Vec<String> = items.iter().map(|m| m.name.clone()).collect();
 
+    Json(VaultResponse::kv(ListData { keys })).into_response()
+}
+
+// ── KV v2: GET /v1/{mount}/metadata (list at root, no path segment) ──────────
+
+pub async fn kv_list_root(
+    State(state): State<VaultState>,
+    Extension(claims): Extension<VaultClaims>,
+    Path(mount): Path<String>,
+    Query(_q): Query<ListQuery>,
+) -> Response {
+    let env_id = match resolve_env(&state, &claims, &mount).await {
+        Ok(id) => id,
+        Err(r) => return r,
+    };
+
+    let items = match state.store.list(env_id, "/").await {
+        Ok(v) => v,
+        Err(e) => return VaultError::internal(e.to_string()),
+    };
+
+    let keys: Vec<String> = items.iter().map(|m| m.name.clone()).collect();
     Json(VaultResponse::kv(ListData { keys })).into_response()
 }
 
@@ -457,8 +650,7 @@ async fn resolve_env(
     claims: &VaultClaims,
     mount: &str,
 ) -> Result<Uuid, Response> {
-    // Try DB mount lookup first
-    match state.db.get_vault_mount(claims.org_id, mount).await {
+    match state.db.get_vault_mount(claims.org_id, &claims.namespace, mount).await {
         Ok(m) => {
             if let Some(env_id) = m.environment_id {
                 return Ok(env_id);
@@ -467,7 +659,14 @@ async fn resolve_env(
         Err(crate::db::DbError::NotFound) => {}
         Err(e) => return Err(VaultError::internal(e.to_string())),
     }
-    // Fall back to default env
+    // Only the root namespace falls back to the default env; a namespace must
+    // never see root data through an unmounted path.
+    if !claims.namespace.is_empty() {
+        return Err(VaultError::resp(
+            StatusCode::NOT_FOUND,
+            format!("no handler for route \"{mount}\""),
+        ));
+    }
     Ok(state.default_env_id)
 }
 

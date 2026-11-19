@@ -32,10 +32,31 @@ pub async fn token(State(state): State<AppState>, Form(form): Form<TokenRequest>
         }))).into_response();
     }
 
+    // Validate the client_secret as a real credential before issuing any token.
+    // Production (Postgres): the client_secret must be a valid API key; the
+    // resulting session inherits that key's org and role. Dev (SQLite): the
+    // client_secret must equal the configured dev root token. Anything else is
+    // rejected — we never mint a session for an unverified caller.
+    let invalid = || (StatusCode::UNAUTHORIZED, Json(json!({
+        "error": "invalid_client",
+        "error_description": "client authentication failed",
+    }))).into_response();
+
+    let (org_id, roles): (Uuid, Vec<String>) = if let Some(ref pool) = state.pg_pool {
+        match crate::api::native::keys::resolve_api_key(pool, client_secret).await {
+            Ok(resolved) => (resolved.org_id, resolved.role.into_iter().collect()),
+            Err(_) => return invalid(),
+        }
+    } else if state.dev_root_token.as_deref() == Some(client_secret) {
+        (state.default_org_id, vec!["owner".into()])
+    } else {
+        return invalid();
+    };
+
     // Issue a real JWT so protected routes can validate it
     let access_token = state
         .sessions
-        .issue(Uuid::new_v4(), state.default_org_id, &client_id, vec!["member".into()], true, 3600)
+        .issue(Uuid::new_v4(), org_id, &client_id, roles, true, 3600)
         .unwrap_or_else(|_| Uuid::new_v4().to_string());
 
     (StatusCode::OK, Json(json!({

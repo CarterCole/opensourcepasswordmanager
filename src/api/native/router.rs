@@ -24,15 +24,22 @@ pub struct NativeState {
 }
 
 pub fn native_router(state: NativeState) -> Router {
-    // Routes that require a valid bearer token (API key or JWT)
-    let protected = Router::new()
-        .route("/auth/me",              get(auth::me))
+    // Admin-only routes: key & user management. Requires a valid bearer token
+    // AND an admin-tier role. `require_auth` is the outer layer so it runs first
+    // and injects Claims; `require_admin` then checks the role (fail closed).
+    let admin = Router::new()
         .route("/keys",                 get(keys::list_keys))
         .route("/keys",                 post(keys::create_key))
         .route("/keys/:id",             delete(keys::revoke_key))
         .route("/users",                get(users::list_users))
         .route("/users/:id",            delete(users::deactivate_user))
         .route("/users/:id/roles/:role", put(users::assign_role))
+        .layer(middleware::from_fn(require_admin))
+        .layer(middleware::from_fn_with_state(state.clone(), require_auth));
+
+    // Authenticated routes available to any valid token (no admin role required).
+    let authed = Router::new()
+        .route("/auth/me", get(auth::me))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     // Public routes — no auth needed
@@ -42,8 +49,26 @@ pub fn native_router(state: NativeState) -> Router {
         .route("/auth/register",  post(auth::register));
 
     Router::new()
-        .nest("/api/v1", public.merge(protected))
+        .nest("/api/v1", public.merge(authed).merge(admin))
         .with_state(state)
+}
+
+/// Middleware (runs after `require_auth`): require an admin-tier role.
+/// Denies with 403 if the authenticated principal is not an org admin/owner.
+async fn require_admin(req: Request, next: Next) -> Response {
+    let is_admin = req
+        .extensions()
+        .get::<crate::auth::Claims>()
+        .map(|c| crate::auth::rbac::RbacService::is_admin(&c.roles))
+        .unwrap_or(false);
+    if !is_admin {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "insufficient privileges: admin role required"})),
+        )
+            .into_response();
+    }
+    next.run(req).await
 }
 
 /// Middleware: accept `Authorization: Bearer <token>` where token is either:
@@ -78,6 +103,7 @@ async fn require_auth(
                     exp: usize::MAX,
                     iat: 0,
                     two_fa_verified: true,
+                    ns: String::new(),
                 };
                 req.extensions_mut().insert(claims);
                 return next.run(req).await;

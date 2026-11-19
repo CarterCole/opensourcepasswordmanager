@@ -13,7 +13,7 @@ fn app() -> axum::Router {
 
 #[tokio::test]
 async fn token_endpoint_accepts_form_encoded() {
-    let body = "grant_type=client_credentials&client_id=org.00000000-0000-0000-0000-000000000001&client_secret=test-secret&scope=api.organization";
+    let body = "grant_type=client_credentials&client_id=org.00000000-0000-0000-0000-000000000001&client_secret=test-token&scope=api.organization";
     let req = axum::http::Request::builder()
         .method("POST")
         .uri("/identity/connect/token")
@@ -145,4 +145,21 @@ async fn members_list_shape() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["object"], "list");
     assert!(body["data"].is_array());
+}
+
+// ── auth: token endpoint must verify the client_secret ────────────────────────
+
+#[tokio::test]
+async fn token_endpoint_rejects_wrong_client_secret() {
+    // A non-empty but invalid client_secret must NOT mint a session.
+    let body = "grant_type=client_credentials&client_id=org.test&client_secret=totally-wrong&scope=api.organization";
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/identity/connect/token")
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(axum::body::Body::from(body.as_bytes().to_vec()))
+        .unwrap();
+    let (status, body) = common::call(app(), req).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body["error"], "invalid_client");
 }

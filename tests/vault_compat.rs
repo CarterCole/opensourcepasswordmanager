@@ -237,3 +237,162 @@ async fn sys_mounts_returns_data_object() {
     // data should be an object (may be empty if no mounts configured)
     assert!(body["data"].is_object(), "data should be an object");
 }
+
+// ── namespaces ────────────────────────────────────────────────────────────────
+
+fn ns_req(method: &str, uri: &str, ns: Option<&str>, body: serde_json::Value) -> axum::http::Request<axum::body::Body> {
+    let mut b = axum::http::Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("Content-Type", "application/json")
+        .header("X-Vault-Token", "test-token");
+    if let Some(ns) = ns {
+        b = b.header("X-Vault-Namespace", ns);
+    }
+    b.body(axum::body::Body::from(serde_json::to_vec(&body).unwrap())).unwrap()
+}
+
+async fn create_ns(app: &axum::Router, path: &str, ns: Option<&str>) -> StatusCode {
+    let (s, _) = common::call(app.clone(), ns_req("POST", &format!("/sys/namespaces/{path}"), ns, json!({}))).await;
+    s
+}
+
+#[tokio::test]
+async fn namespace_create_read_list_delete() {
+    let app = app();
+    assert_eq!(create_ns(&app, "team-a", None).await, StatusCode::OK);
+
+    let (s, body) = common::call(app.clone(), ns_req("GET", "/sys/namespaces/team-a", None, json!(null))).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(body["data"]["path"], "team-a/");
+
+    let (s, body) = common::call(app.clone(), ns_req("GET", "/sys/namespaces?list=true", None, json!(null))).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(body["data"]["keys"], json!(["team-a/"]));
+
+    let (s, _) = common::call(app.clone(), ns_req("DELETE", "/sys/namespaces/team-a", None, json!(null))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (s, _) = common::call(app.clone(), ns_req("GET", "/sys/namespaces/team-a", None, json!(null))).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn namespace_rejects_reserved_and_duplicate_and_orphan() {
+    let app = app();
+    assert_eq!(create_ns(&app, "sys", None).await, StatusCode::BAD_REQUEST);
+    assert_eq!(create_ns(&app, "bad%20name", None).await, StatusCode::BAD_REQUEST);
+    assert_eq!(create_ns(&app, "a", None).await, StatusCode::OK);
+    assert_eq!(create_ns(&app, "a", None).await, StatusCode::BAD_REQUEST);
+    // parent "x" doesn't exist
+    assert_eq!(create_ns(&app, "x/y", None).await, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn namespace_secrets_are_isolated_via_header() {
+    let app = app();
+    create_ns(&app, "team-a", None).await;
+    create_ns(&app, "team-b", None).await;
+
+    let w = ns_req("POST", "/secret/data/db", Some("team-a"), json!({"data": {"pw": "a-secret"}}));
+    assert_eq!(common::call(app.clone(), w).await.0, StatusCode::OK);
+
+    let (s, body) = common::call(app.clone(), ns_req("GET", "/secret/data/db", Some("team-a"), json!(null))).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(body["data"]["data"]["pw"], "a-secret");
+
+    // Not visible from a sibling namespace or from root.
+    let (s, _) = common::call(app.clone(), ns_req("GET", "/secret/data/db", Some("team-b"), json!(null))).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _) = common::call(app.clone(), ns_req("GET", "/secret/data/db", None, json!(null))).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn namespace_via_path_prefix_matches_header() {
+    let app = app();
+    create_ns(&app, "team-a", None).await;
+    let w = ns_req("POST", "/team-a/secret/data/db", None, json!({"data": {"pw": "x"}}));
+    assert_eq!(common::call(app.clone(), w).await.0, StatusCode::OK);
+    let (s, body) = common::call(app.clone(), ns_req("GET", "/secret/data/db", Some("team-a"), json!(null))).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(body["data"]["data"]["pw"], "x");
+}
+
+#[tokio::test]
+async fn nested_namespaces_and_relative_creation() {
+    let app = app();
+    create_ns(&app, "team-a", None).await;
+    // created relative to the header namespace
+    assert_eq!(create_ns(&app, "prod", Some("team-a")).await, StatusCode::OK);
+    // and via path prefix
+    let (s, _) = common::call(app.clone(), ns_req("POST", "/team-a/sys/namespaces/staging", None, json!({}))).await;
+    assert_eq!(s, StatusCode::OK);
+
+    let w = ns_req("POST", "/team-a/prod/secret/data/k", None, json!({"data": {"v": "1"}}));
+    assert_eq!(common::call(app.clone(), w).await.0, StatusCode::OK);
+    let (s, _) = common::call(app.clone(), ns_req("GET", "/secret/data/k", Some("team-a/prod"), json!(null))).await;
+    assert_eq!(s, StatusCode::OK);
+
+    // parent can't be deleted while it has children; child can
+    let (s, _) = common::call(app.clone(), ns_req("DELETE", "/sys/namespaces/team-a", None, json!(null))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+
+    let (s, body) = common::call(app.clone(), ns_req("GET", "/sys/namespaces?list=true", Some("team-a"), json!(null))).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(body["data"]["keys"], json!(["prod/", "staging/"]));
+}
+
+#[tokio::test]
+async fn nonempty_namespace_cannot_be_deleted() {
+    let app = app();
+    create_ns(&app, "team-a", None).await;
+    common::call(app.clone(), ns_req("POST", "/secret/data/k", Some("team-a"), json!({"data": {"v": "1"}}))).await;
+    let (s, _) = common::call(app.clone(), ns_req("DELETE", "/sys/namespaces/team-a", None, json!(null))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn unknown_namespace_header_is_404() {
+    let (s, _) = common::call(app(), ns_req("GET", "/secret/data/x", Some("nope"), json!(null))).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn child_token_is_confined_to_its_namespace() {
+    let app = app();
+    create_ns(&app, "team-a", None).await;
+    create_ns(&app, "team-b", None).await;
+
+    let (s, body) = common::call(app.clone(), ns_req("POST", "/auth/token/create", Some("team-a"), json!({}))).await;
+    assert_eq!(s, StatusCode::OK);
+    let tok = body["auth"]["client_token"].as_str().unwrap().to_string();
+
+    let with_tok = |ns: &str| {
+        axum::http::Request::builder()
+            .method("GET").uri("/secret/data/none")
+            .header("X-Vault-Token", &tok).header("X-Vault-Namespace", ns)
+            .body(axum::body::Body::empty()).unwrap()
+    };
+    // allowed in own namespace (404 = secret absent, not forbidden)
+    assert_eq!(common::call(app.clone(), with_tok("team-a")).await.0, StatusCode::NOT_FOUND);
+    // forbidden in sibling and in root
+    assert_eq!(common::call(app.clone(), with_tok("team-b")).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(common::call(app.clone(), with_tok("")).await.0, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn namespace_works_when_nested_under_v1() {
+    let app = axum::Router::new().nest("/v1", app());
+    create_ns_at(&app, "/v1/sys/namespaces/team-a").await;
+    let w = ns_req("POST", "/v1/team-a/secret/data/db", None, json!({"data": {"pw": "x"}}));
+    assert_eq!(common::call(app.clone(), w).await.0, StatusCode::OK);
+    let (s, _) = common::call(app.clone(), ns_req("GET", "/v1/secret/data/db", Some("team-a"), json!(null))).await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = common::call(app, ns_req("GET", "/v1/secret/data/db", None, json!(null))).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}
+
+async fn create_ns_at(app: &axum::Router, uri: &str) {
+    let (s, _) = common::call(app.clone(), ns_req("POST", uri, None, json!({}))).await;
+    assert_eq!(s, StatusCode::OK);
+}

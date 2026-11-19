@@ -160,10 +160,21 @@ pub struct AuditLog {
 pub struct VaultMount {
     pub id: Uuid,
     pub org_id: Uuid,
+    /// Owning namespace path ("" = root).
+    pub namespace: String,
     pub mount_path: String,
     pub environment_id: Option<Uuid>,
     pub engine_type: String,
     pub config: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+}
+
+/// An isolated sub-tree (OpenBao/Vault-style). `path` is absolute, e.g. "team-a/prod".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Namespace {
+    pub id: Uuid,
+    pub org_id: Uuid,
+    pub path: String,
     pub created_at: DateTime<Utc>,
 }
 

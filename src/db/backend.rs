@@ -67,20 +67,48 @@ pub trait SecretBackend: Send + Sync {
 
     // ── Vault mounts ─────────────────────────────────────────────────────────
 
-    async fn get_vault_mount(&self, org_id: Uuid, mount_path: &str) -> Result<VaultMount>;
+    async fn get_vault_mount(&self, org_id: Uuid, namespace: &str, mount_path: &str) -> Result<VaultMount>;
 
-    async fn list_vault_mounts(&self, org_id: Uuid) -> Result<Vec<VaultMount>>;
+    async fn list_vault_mounts(&self, org_id: Uuid, namespace: &str) -> Result<Vec<VaultMount>>;
 
     async fn upsert_vault_mount(
         &self,
         org_id: Uuid,
+        namespace: &str,
         mount_path: &str,
         environment_id: Option<Uuid>,
         engine_type: &str,
     ) -> Result<VaultMount>;
 
-    // ── Tags ─────────────────────────────────────────────────────────────────
+    // ── Namespaces ───────────────────────────────────────────────────────────
+
+    /// Create a namespace and provision its isolated environment plus a default
+    /// `secret/` KV mount. The parent namespace must already exist.
+    /// Returns `Conflict` if it exists, `NotFound` if the parent is missing.
+    async fn create_namespace(&self, org_id: Uuid, path: &str) -> Result<Namespace>;
+
+    async fn get_namespace(&self, org_id: Uuid, path: &str) -> Result<Namespace>;
+
+    /// All namespaces in the org (callers filter to direct children).
+    async fn list_namespaces(&self, org_id: Uuid) -> Result<Vec<Namespace>>;
+
+    /// Delete an empty namespace. `Conflict` if it has children or live secrets.
+    async fn delete_namespace(&self, org_id: Uuid, path: &str) -> Result<()>;
+
+    // ── Tags / metadata ───────────────────────────────────────────────────────
 
     /// Merge/replace the tags JSON on a secret without creating a new version.
     async fn update_secret_tags(&self, secret_id: Uuid, tags: serde_json::Value) -> Result<()>;
+
+    /// Update the description field on a secret without creating a new version.
+    async fn update_secret_description(&self, secret_id: Uuid, description: String) -> Result<()>;
+
+    /// Un-soft-delete a secret (clears deleted_at). Returns NotFound if the secret
+    /// doesn't exist or was never deleted.
+    async fn restore_secret(
+        &self,
+        environment_id: Uuid,
+        path: &str,
+        name: &str,
+    ) -> Result<SecretMeta>;
 }

@@ -36,7 +36,11 @@ async fn main() -> Result<()> {
 
     let (backend, pools, (default_org_id, default_env_id)) = if cfg.database_url.starts_with("sqlite:") {
         tracing::info!("SQLite mode — {}", cfg.database_url);
-        let pool = sqlx::SqlitePool::connect(&cfg.database_url)
+        let opts = cfg.database_url.parse::<sqlx::sqlite::SqliteConnectOptions>()
+            .context("invalid SQLite URL")?
+            .create_if_missing(true)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
+        let pool = sqlx::SqlitePool::connect_with(opts)
             .await.context("failed to open SQLite database")?;
         sqlx::migrate::Migrator::new(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations/sqlite")
@@ -76,10 +80,17 @@ async fn main() -> Result<()> {
     };
     let sessions = Arc::new(auth::SessionService::from_secret(&cfg.jwt_secret));
 
+    if cfg.dev_root_token.is_some() {
+        tracing::warn!(
+            "SECRETD_DEV_ROOT_TOKEN is set — a master bypass token is active. \
+             Do not use this in production; rely on the native API / issued tokens instead."
+        );
+    }
+
     let vault_state = api::vault::auth::VaultState {
         store: store.clone(),
         db: backend.clone(),
-        dev_root_token: Some(cfg.dev_root_token.clone()),
+        dev_root_token: cfg.dev_root_token.clone(),
         default_org_id,
         default_env_id,
         pg_pool: pg_pool.clone(),
@@ -88,7 +99,7 @@ async fn main() -> Result<()> {
     let app_state = api::common::AppState {
         store: store.clone(),
         db: backend.clone(),
-        dev_root_token: Some(cfg.dev_root_token.clone()),
+        dev_root_token: cfg.dev_root_token.clone(),
         default_org_id,
         default_env_id,
         pg_pool: pg_pool.clone(),
@@ -102,7 +113,9 @@ async fn main() -> Result<()> {
         .nest("/azure",    api::azure::azure_router(app_state.clone()))
         .nest("/client",   api::cloudflare::cf_router(app_state.clone()))
         .nest("/bitwarden",api::bitwarden::bitwarden_router(app_state.clone()))
-        .nest("/ui",       ui::serve_ui());
+        .nest("/ui",       ui::serve_ui())
+        .route("/", axum::routing::get(home))
+        .fallback(not_found);
 
     // Native API (key management + human auth) — Postgres only for now.
     // SQLite demo: use the dev root token directly.
@@ -121,8 +134,14 @@ async fn main() -> Result<()> {
         };
         app = app.merge(api::native::native_router(native_state));
         tracing::info!("native API mounted at /api/v1/");
+    } else if cfg.dev_root_token.is_some() {
+        tracing::warn!("SQLite mode: /api/v1/ not mounted — authenticate with the configured SECRETD_DEV_ROOT_TOKEN");
     } else {
-        tracing::warn!("SQLite mode: /api/v1/ not mounted — use dev token '{}'", cfg.dev_root_token);
+        tracing::error!(
+            "SQLite mode: /api/v1/ not mounted and no SECRETD_DEV_ROOT_TOKEN set — \
+             the server has no usable authentication and every request will be rejected. \
+             Set SECRETD_DEV_ROOT_TOKEN to a strong random value for local use."
+        );
     }
 
     let app = app
@@ -159,8 +178,8 @@ async fn bootstrap_postgres(pool: &sqlx::PgPool) -> Result<(Uuid, Uuid)> {
     let env_id: Uuid = env.get("id");
 
     sqlx::query(
-        "INSERT INTO vault_mounts (org_id, mount_path, environment_id, engine_type)
-         VALUES ($1, 'secret', $2, 'kv-v2') ON CONFLICT (org_id, mount_path) DO NOTHING",
+        "INSERT INTO vault_mounts (org_id, namespace, mount_path, environment_id, engine_type)
+         VALUES ($1, '', 'secret', $2, 'kv-v2') ON CONFLICT (org_id, namespace, mount_path) DO NOTHING",
     ).bind(org_id).bind(env_id).execute(pool).await?;
 
     Ok((org_id, env_id))
@@ -193,10 +212,88 @@ async fn bootstrap_sqlite(pool: &sqlx::SqlitePool) -> Result<(Uuid, Uuid)> {
 
     let mount_id = Uuid::new_v4();
     sqlx::query(
-        "INSERT OR IGNORE INTO vault_mounts (id, org_id, mount_path, environment_id, engine_type)
-         VALUES (?, ?, 'secret', ?, 'kv-v2')",
+        "INSERT OR IGNORE INTO vault_mounts (id, org_id, namespace, mount_path, environment_id, engine_type)
+         VALUES (?, ?, '', 'secret', ?, 'kv-v2')",
     ).bind(mount_id.to_string()).bind(org_id.to_string()).bind(env_id.to_string())
      .execute(pool).await?;
 
     Ok((org_id, env_id))
+}
+
+async fn not_found(uri: axum::http::Uri, headers: axum::http::HeaderMap) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let path = uri.path();
+    let wants_json = headers
+        .get(axum::http::header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.contains("application/json"))
+        .unwrap_or(false);
+
+    if wants_json {
+        (
+            axum::http::StatusCode::NOT_FOUND,
+            axum::Json(serde_json::json!({ "error": "not_found", "path": path })),
+        ).into_response()
+    } else {
+        let body = format!(r#"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>404 — secretd</title>
+  <style>
+    body {{ font-family: monospace; max-width: 640px; margin: 80px auto; padding: 0 24px; color: #cdd6f4; background: #1e1e2e; }}
+    h1 {{ font-size: 1.4rem; margin-bottom: 0.25rem; }}
+    p  {{ color: #a6adc8; font-size: 0.875rem; margin: 0 0 2rem; }}
+    .path {{ color: #f38ba8; }}
+    a {{ color: #cba6f7; text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+  </style>
+</head>
+<body>
+  <h1>404 Not Found</h1>
+  <p>No route for <span class="path">{path}</span></p>
+  <a href="/">← back to index</a>
+</body>
+</html>"#);
+        (axum::http::StatusCode::NOT_FOUND, axum::response::Html(body)).into_response()
+    }
+}
+
+async fn home() -> axum::response::Html<&'static str> {
+    axum::response::Html(r#"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>secretd</title>
+  <style>
+    body { font-family: monospace; max-width: 640px; margin: 80px auto; padding: 0 24px; color: #cdd6f4; background: #1e1e2e; }
+    h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+    p  { color: #a6adc8; margin: 0 0 2rem; font-size: 0.875rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    th { text-align: left; color: #6c7086; font-weight: normal; padding: 4px 0; border-bottom: 1px solid #313244; }
+    td { padding: 6px 0; border-bottom: 1px solid #181825; vertical-align: top; }
+    td:first-child { color: #89b4fa; width: 120px; }
+    td:nth-child(2) { color: #a6e3a1; padding-right: 16px; white-space: nowrap; }
+    a { color: #cba6f7; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <h1>secretd</h1>
+  <p>Open-source secrets manager</p>
+  <table>
+    <thead><tr><th>Interface</th><th>Mount</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td>Dashboard</td><td><a href="/ui/">/ui/</a></td><td>Web UI</td></tr>
+      <tr><td>Vault KV v2</td><td>/v1/</td><td>HashiCorp Vault-compatible API</td></tr>
+      <tr><td>AWS Secrets</td><td>/</td><td>AWS SecretsManager shim (POST)</td></tr>
+      <tr><td>GCP</td><td>/gcp/</td><td>GCP Secret Manager shim</td></tr>
+      <tr><td>Azure</td><td>/azure/</td><td>Azure Key Vault shim</td></tr>
+      <tr><td>Bitwarden</td><td>/bitwarden/</td><td>Bitwarden Secrets Manager shim</td></tr>
+      <tr><td>Cloudflare</td><td>/client/</td><td>Cloudflare Workers secrets shim</td></tr>
+      <tr><td>Health</td><td><a href="/v1/sys/health">/v1/sys/health</a></td><td>Liveness check</td></tr>
+    </tbody>
+  </table>
+</body>
+</html>"#)
 }

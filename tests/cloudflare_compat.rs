@@ -19,7 +19,7 @@ fn cf_req(
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("X-Auth-Email", "test@example.com")
-        .header("X-Auth-Key", "test-api-key")
+        .header("X-Auth-Key", "test-token")
         .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
         .unwrap()
 }
@@ -156,4 +156,30 @@ async fn missing_secret_cf_error() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["success"], false, "success should be false for errors");
     assert!(body["errors"].as_array().map(|a| !a.is_empty()).unwrap_or(false));
+}
+
+// ── auth: X-Auth-Key must be a verifiable credential ──────────────────────────
+
+#[tokio::test]
+async fn rejects_unknown_auth_key() {
+    let req = axum::http::Request::builder()
+        .method("GET")
+        .uri("/v4/accounts/acct123/secrets_store/stores")
+        .header("X-Auth-Email", "test@example.com")
+        .header("X-Auth-Key", "not-a-real-key")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let (status, _body) = common::call(app(), req).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn rejects_missing_credentials() {
+    let req = axum::http::Request::builder()
+        .method("GET")
+        .uri("/v4/accounts/acct123/secrets_store/stores")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let (status, _body) = common::call(app(), req).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
 }

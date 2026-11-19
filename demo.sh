@@ -4,8 +4,13 @@ set -e
 
 SECRETD_PORT=${SECRETD_PORT:-8200}
 UI_URL="http://localhost:${SECRETD_PORT}/ui/"
-DEV_TOKEN="dev-root-token"
 DB_FILE="secretd-demo.db"
+
+# Generate fresh random secrets for every demo run — never ship a known token.
+rand_hex() { openssl rand -hex "$1" 2>/dev/null || head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+DEV_TOKEN="$(rand_hex 24)"
+JWT_SECRET="$(rand_hex 48)"
+KEK_B64="$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64)"
 
 # ── colours ───────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[1;33m'; RESET='\033[0m'
@@ -36,13 +41,17 @@ ok "Compiled"
 
 # ── 3. Export env and run server ──────────────────────────────────────────────
 export DATABASE_URL="sqlite:./${DB_FILE}"
-export SECRETD_LISTEN="127.0.0.1:${SECRETD_PORT}"
+export SECRETD_LISTEN="0.0.0.0:${SECRETD_PORT}"
 export SECRETD_DEV_ROOT_TOKEN="${DEV_TOKEN}"
-export SECRETD_JWT_SECRET="demo-jwt-secret"
-export SECRETD_KEK_ID="00000000-0000-0000-0000-000000000001"
-export SECRETD_KEK="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="   # 32 zero bytes (demo only)
+export SECRETD_JWT_SECRET="${JWT_SECRET}"
+export SECRETD_KEK_ID="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen)"
+export SECRETD_KEK="${KEK_B64}"   # freshly generated per run (demo DB is wiped on exit)
 
 info "Starting secretd on port ${SECRETD_PORT} (SQLite: ${DB_FILE})…"
+# Kill any leftover secretd from a previous run to free the port
+pkill -f "target/debug/secretd" 2>/dev/null || true
+pkill -f "target/release/secretd" 2>/dev/null || true
+sleep 0.3
 ./target/debug/secretd &
 SERVER_PID=$!
 

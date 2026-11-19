@@ -422,46 +422,110 @@ impl SecretBackend for SqliteBackend {
         Ok(())
     }
 
-    async fn get_vault_mount(&self, org_id: Uuid, mount_path: &str) -> Result<VaultMount> {
+    async fn get_vault_mount(&self, org_id: Uuid, namespace: &str, mount_path: &str) -> Result<VaultMount> {
         let r = sqlx::query(
-            "SELECT id, org_id, mount_path, environment_id, engine_type, config, created_at
-             FROM vault_mounts WHERE org_id = ? AND mount_path = ?",
+            "SELECT id, org_id, namespace, mount_path, environment_id, engine_type, config, created_at
+             FROM vault_mounts WHERE org_id = ? AND namespace = ? AND mount_path = ?",
         )
-        .bind(org_id.to_string()).bind(mount_path)
+        .bind(org_id.to_string()).bind(namespace).bind(mount_path)
         .fetch_optional(&self.pool).await.map_err(DbError::Sqlx)?
         .ok_or(DbError::NotFound)?;
-
-        Ok(VaultMount {
-            id: parse_uuid(&r, "id")?,
-            org_id,
-            mount_path: r.try_get("mount_path").map_err(DbError::Sqlx)?,
-            environment_id: r.try_get::<Option<String>, _>("environment_id").ok().flatten()
-                .and_then(|s| Uuid::parse_str(&s).ok()),
-            engine_type: r.try_get("engine_type").map_err(DbError::Sqlx)?,
-            config: r.try_get::<Option<String>, _>("config").ok().flatten()
-                .and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default(),
-            created_at: get_ts(&r, "created_at"),
-        })
+        mount_from_row(&r, org_id)
     }
 
-    async fn list_vault_mounts(&self, org_id: Uuid) -> Result<Vec<VaultMount>> {
+    async fn list_vault_mounts(&self, org_id: Uuid, namespace: &str) -> Result<Vec<VaultMount>> {
         let rows = sqlx::query(
-            "SELECT id, mount_path, environment_id, engine_type, config, created_at
-             FROM vault_mounts WHERE org_id = ?",
+            "SELECT id, org_id, namespace, mount_path, environment_id, engine_type, config, created_at
+             FROM vault_mounts WHERE org_id = ? AND namespace = ? ORDER BY mount_path",
         )
-        .bind(org_id.to_string()).fetch_all(&self.pool).await.map_err(DbError::Sqlx)?;
+        .bind(org_id.to_string()).bind(namespace)
+        .fetch_all(&self.pool).await.map_err(DbError::Sqlx)?;
+        rows.iter().map(|r| mount_from_row(r, org_id)).collect()
+    }
 
-        rows.iter().map(|r| Ok(VaultMount {
-            id: parse_uuid(r, "id")?,
-            org_id,
-            mount_path: r.try_get("mount_path").map_err(DbError::Sqlx)?,
-            environment_id: r.try_get::<Option<String>, _>("environment_id").ok().flatten()
-                .and_then(|s| Uuid::parse_str(&s).ok()),
-            engine_type: r.try_get("engine_type").map_err(DbError::Sqlx)?,
-            config: r.try_get::<Option<String>, _>("config").ok().flatten()
-                .and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default(),
-            created_at: get_ts(r, "created_at"),
-        })).collect()
+    async fn create_namespace(&self, org_id: Uuid, path: &str) -> Result<Namespace> {
+        if let Some((parent, _)) = path.rsplit_once('/') {
+            self.get_namespace(org_id, parent).await?;
+        }
+        let mut tx = self.pool.begin().await.map_err(DbError::Sqlx)?;
+
+        let project_id: String = sqlx::query_scalar(
+            "SELECT id FROM projects WHERE org_id = ? ORDER BY created_at LIMIT 1",
+        ).bind(org_id.to_string()).fetch_optional(&mut *tx).await.map_err(DbError::Sqlx)?
+            .ok_or(DbError::NotFound)?;
+
+        let ns_id = Uuid::new_v4();
+        let ins = sqlx::query(
+            "INSERT OR IGNORE INTO namespaces (id, org_id, path, created_at) VALUES (?, ?, ?, ?)",
+        ).bind(ns_id.to_string()).bind(org_id.to_string()).bind(path).bind(now())
+            .execute(&mut *tx).await.map_err(DbError::Sqlx)?;
+        if ins.rows_affected() == 0 {
+            return Err(DbError::Conflict("namespace already exists".into()));
+        }
+
+        let env_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO environments (id, project_id, name, slug) VALUES (?, ?, ?, ?)")
+            .bind(env_id.to_string()).bind(&project_id)
+            .bind(format!("ns:{path}")).bind(format!("ns-{ns_id}"))
+            .execute(&mut *tx).await.map_err(DbError::Sqlx)?;
+
+        sqlx::query(
+            "INSERT INTO vault_mounts (id, org_id, namespace, mount_path, environment_id, engine_type)
+             VALUES (?, ?, ?, 'secret', ?, 'kv-v2')",
+        ).bind(Uuid::new_v4().to_string()).bind(org_id.to_string()).bind(path).bind(env_id.to_string())
+            .execute(&mut *tx).await.map_err(DbError::Sqlx)?;
+
+        tx.commit().await.map_err(DbError::Sqlx)?;
+        self.get_namespace(org_id, path).await
+    }
+
+    async fn get_namespace(&self, org_id: Uuid, path: &str) -> Result<Namespace> {
+        let r = sqlx::query("SELECT id, path, created_at FROM namespaces WHERE org_id = ? AND path = ?")
+            .bind(org_id.to_string()).bind(path)
+            .fetch_optional(&self.pool).await.map_err(DbError::Sqlx)?
+            .ok_or(DbError::NotFound)?;
+        ns_from_row(&r, org_id)
+    }
+
+    async fn list_namespaces(&self, org_id: Uuid) -> Result<Vec<Namespace>> {
+        let rows = sqlx::query("SELECT id, path, created_at FROM namespaces WHERE org_id = ? ORDER BY path")
+            .bind(org_id.to_string()).fetch_all(&self.pool).await.map_err(DbError::Sqlx)?;
+        rows.iter().map(|r| ns_from_row(r, org_id)).collect()
+    }
+
+    async fn delete_namespace(&self, org_id: Uuid, path: &str) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(DbError::Sqlx)?;
+        let child_like = format!("{}/%", path.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+        let has_children: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM namespaces WHERE org_id = ? AND path LIKE ? ESCAPE '\\')",
+        ).bind(org_id.to_string()).bind(&child_like).fetch_one(&mut *tx).await.map_err(DbError::Sqlx)?;
+        if has_children {
+            return Err(DbError::Conflict("namespace has child namespaces".into()));
+        }
+        let has_secrets: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM secrets s JOIN vault_mounts m ON m.environment_id = s.environment_id
+                WHERE m.org_id = ? AND m.namespace = ? AND s.deleted_at IS NULL)",
+        ).bind(org_id.to_string()).bind(path).fetch_one(&mut *tx).await.map_err(DbError::Sqlx)?;
+        if has_secrets {
+            return Err(DbError::Conflict("namespace is not empty".into()));
+        }
+        let env_ids: Vec<String> = sqlx::query_scalar(
+            "SELECT environment_id FROM vault_mounts WHERE org_id = ? AND namespace = ? AND environment_id IS NOT NULL",
+        ).bind(org_id.to_string()).bind(path).fetch_all(&mut *tx).await.map_err(DbError::Sqlx)?;
+        sqlx::query("DELETE FROM vault_mounts WHERE org_id = ? AND namespace = ?")
+            .bind(org_id.to_string()).bind(path).execute(&mut *tx).await.map_err(DbError::Sqlx)?;
+        let gone = sqlx::query("DELETE FROM namespaces WHERE org_id = ? AND path = ?")
+            .bind(org_id.to_string()).bind(path).execute(&mut *tx).await.map_err(DbError::Sqlx)?;
+        if gone.rows_affected() == 0 {
+            return Err(DbError::NotFound);
+        }
+        for env_id in env_ids {
+            sqlx::query("DELETE FROM environments WHERE id = ?")
+                .bind(env_id).execute(&mut *tx).await.map_err(DbError::Sqlx)?;
+        }
+        tx.commit().await.map_err(DbError::Sqlx)?;
+        Ok(())
     }
 
     async fn update_secret_tags(&self, secret_id: Uuid, tags: serde_json::Value) -> Result<()> {
@@ -475,16 +539,94 @@ impl SecretBackend for SqliteBackend {
         Ok(())
     }
 
-    async fn upsert_vault_mount(&self, org_id: Uuid, mount_path: &str, env_id: Option<Uuid>, engine_type: &str) -> Result<VaultMount> {
+    async fn update_secret_description(&self, secret_id: Uuid, description: String) -> Result<()> {
+        sqlx::query(
+            "UPDATE secrets SET description = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+        )
+        .bind(description)
+        .bind(now())
+        .bind(secret_id.to_string())
+        .execute(&self.pool).await.map_err(DbError::Sqlx)?;
+        Ok(())
+    }
+
+    async fn restore_secret(&self, environment_id: Uuid, path: &str, name: &str) -> Result<SecretMeta> {
+        let rows_affected = sqlx::query(
+            "UPDATE secrets SET deleted_at = NULL, updated_at = ?
+             WHERE environment_id = ? AND path = ? AND name = ? AND deleted_at IS NOT NULL",
+        )
+        .bind(now())
+        .bind(environment_id.to_string())
+        .bind(path)
+        .bind(name)
+        .execute(&self.pool).await.map_err(DbError::Sqlx)?
+        .rows_affected();
+
+        if rows_affected == 0 {
+            return Err(DbError::NotFound);
+        }
+
+        let r = sqlx::query(
+            "SELECT s.id, s.name, s.path, s.tags, s.created_at, s.updated_at, s.deleted_at,
+                    COALESCE(MAX(sv.version_num), 0) as cur_ver
+             FROM secrets s
+             LEFT JOIN secret_versions sv ON sv.secret_id = s.id AND sv.deleted_at IS NULL
+             WHERE s.environment_id = ? AND s.path = ? AND s.name = ? AND s.deleted_at IS NULL
+             GROUP BY s.id",
+        )
+        .bind(environment_id.to_string())
+        .bind(path)
+        .bind(name)
+        .fetch_optional(&self.pool).await.map_err(DbError::Sqlx)?
+        .ok_or(DbError::NotFound)?;
+
+        Ok(SecretMeta {
+            id: parse_uuid(&r, "id")?,
+            name: r.try_get("name").map_err(DbError::Sqlx)?,
+            path: r.try_get("path").map_err(DbError::Sqlx)?,
+            current_version: r.try_get("cur_ver").unwrap_or(0),
+            created_at: get_ts(&r, "created_at"),
+            updated_at: get_ts(&r, "updated_at"),
+            deleted_at: None,
+            tags: r.try_get::<Option<String>, _>("tags").ok().flatten()
+                .and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default(),
+        })
+    }
+
+    async fn upsert_vault_mount(&self, org_id: Uuid, namespace: &str, mount_path: &str, env_id: Option<Uuid>, engine_type: &str) -> Result<VaultMount> {
         let id = Uuid::new_v4();
         sqlx::query(
-            "INSERT INTO vault_mounts (id, org_id, mount_path, environment_id, engine_type)
-             VALUES (?, ?, ?, ?, ?)
-             ON CONFLICT (org_id, mount_path) DO UPDATE SET environment_id = excluded.environment_id",
+            "INSERT INTO vault_mounts (id, org_id, namespace, mount_path, environment_id, engine_type)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT (org_id, namespace, mount_path) DO UPDATE SET environment_id = excluded.environment_id",
         )
-        .bind(id.to_string()).bind(org_id.to_string()).bind(mount_path)
+        .bind(id.to_string()).bind(org_id.to_string()).bind(namespace).bind(mount_path)
         .bind(env_id.map(|u| u.to_string())).bind(engine_type)
         .execute(&self.pool).await.map_err(DbError::Sqlx)?;
-        self.get_vault_mount(org_id, mount_path).await
+        self.get_vault_mount(org_id, namespace, mount_path).await
     }
+}
+
+fn mount_from_row(r: &sqlx::sqlite::SqliteRow, org_id: Uuid) -> Result<VaultMount> {
+    Ok(VaultMount {
+        id: parse_uuid(r, "id")?,
+        org_id,
+        namespace: r.try_get("namespace").map_err(DbError::Sqlx)?,
+        mount_path: r.try_get("mount_path").map_err(DbError::Sqlx)?,
+        environment_id: r.try_get::<Option<String>, _>("environment_id").ok().flatten()
+            .and_then(|s| Uuid::parse_str(&s).ok()),
+        engine_type: r.try_get("engine_type").map_err(DbError::Sqlx)?,
+        config: r.try_get::<Option<String>, _>("config").ok().flatten()
+            .and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default(),
+        created_at: get_ts(r, "created_at"),
+    })
+}
+
+fn ns_from_row(r: &sqlx::sqlite::SqliteRow, org_id: Uuid) -> Result<Namespace> {
+    Ok(Namespace {
+        id: parse_uuid(r, "id")?,
+        org_id,
+        path: r.try_get("path").map_err(DbError::Sqlx)?,
+        created_at: get_ts(r, "created_at"),
+    })
 }

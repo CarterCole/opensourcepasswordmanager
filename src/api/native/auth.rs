@@ -135,6 +135,25 @@ pub async fn register(
         _ => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "no org found"}))).into_response(),
     };
 
+    // Open registration is a first-user bootstrap ONLY. Once any user exists, the
+    // endpoint is closed — additional users must be invited by an admin — so a
+    // stranger can never self-register (and never be granted the owner role).
+    let user_count: i64 = match sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE org_id = $1")
+        .bind(org_id)
+        .fetch_one(&s.pool)
+        .await
+    {
+        Ok(c) => c,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+    };
+    if user_count > 0 {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "registration is closed; an administrator must invite additional users"})),
+        )
+            .into_response();
+    }
+
     let row = sqlx::query(
         "INSERT INTO users (org_id, email, display_name, password_hash)
          VALUES ($1, $2, $3, $4)
@@ -150,7 +169,7 @@ pub async fn register(
     match row {
         Ok(Some(r)) => {
             let user_id: Uuid = r.get("id");
-            // Assign owner role to first user
+            // First user bootstraps as owner.
             let _ = sqlx::query(
                 "INSERT INTO role_assignments (user_id, role_id, scope_type, scope_id)
                  VALUES ($1, '00000000-0000-0000-0000-000000000001', 'org', $2)

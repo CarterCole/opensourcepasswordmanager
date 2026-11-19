@@ -15,6 +15,10 @@ pub struct Claims {
     pub iat: usize,
     /// true if 2FA has been satisfied (or not enrolled)
     pub two_fa_verified: bool,
+    /// Namespace the token was issued in ("" = root). Grants access to that
+    /// namespace and its descendants only.
+    #[serde(default)]
+    pub ns: String,
 }
 
 pub struct SessionService {
@@ -39,6 +43,20 @@ impl SessionService {
         two_fa_verified: bool,
         ttl_seconds: i64,
     ) -> Result<String> {
+        self.issue_in_namespace(user_id, org_id, email, roles, two_fa_verified, ttl_seconds, "")
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn issue_in_namespace(
+        &self,
+        user_id: Uuid,
+        org_id: Uuid,
+        email: &str,
+        roles: Vec<String>,
+        two_fa_verified: bool,
+        ttl_seconds: i64,
+        namespace: &str,
+    ) -> Result<String> {
         let now = Utc::now();
         let claims = Claims {
             sub: user_id.to_string(),
@@ -48,6 +66,7 @@ impl SessionService {
             iat: now.timestamp() as usize,
             exp: (now + Duration::seconds(ttl_seconds)).timestamp() as usize,
             two_fa_verified,
+            ns: namespace.to_string(),
         };
         let token = encode(&Header::default(), &claims, &self.encoding)?;
         Ok(token)

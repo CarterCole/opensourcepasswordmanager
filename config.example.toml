@@ -1,11 +1,20 @@
 # secretd configuration
 # Copy to config.toml and adjust. All values can also be set via environment variables.
+#
+# SECURITY: the server fails closed. SECRETD_JWT_SECRET is REQUIRED and must be a
+# strong random value (>= 32 chars); the server refuses to start otherwise.
+# SECRETD_DEV_ROOT_TOKEN is a dev-only master bypass token — leave it UNSET in
+# production. There is no default for either; nothing here is a usable credential.
 
 [server]
 listen = "0.0.0.0:8200"
-# Root token for dev mode only — disable in production
-dev_root_token = "dev-root-token"
-jwt_secret = "change-me-in-production"
+
+# Dev-only root token. OMIT in production — when unset, no master token exists.
+# When set (local/dev), use a long random value: `openssl rand -hex 24`
+# dev_root_token = "<openssl rand -hex 24>"
+
+# REQUIRED. Generate with: openssl rand -base64 48
+jwt_secret = "<openssl rand -base64 48>"
 
 [storage]
 # postgres | sqlite | redis
@@ -23,6 +32,6 @@ key_prefix = "secretd:"
 
 [crypto]
 # Run `secretd generate-kek` to generate these values
-kek_id = "00000000-0000-0000-0000-000000000001"
-# 32-byte key, base64-encoded
-kek = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+kek_id = "<uuid from: secretd generate-kek>"
+# 32-byte key, base64-encoded — generate with: openssl rand -base64 32
+kek = "<openssl rand -base64 32>"

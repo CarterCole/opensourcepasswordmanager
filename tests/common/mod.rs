@@ -12,7 +12,7 @@ use opensourcepasswordmanager::{
     db::{
         backend::SecretBackend,
         models::{
-            AuditLog, Secret, SecretLabel, SecretMeta, SecretValue, SecretVersion, VaultMount,
+            AuditLog, Namespace, Secret, SecretLabel, SecretMeta, SecretValue, SecretVersion, VaultMount,
             WriteSecret,
         },
         DbError, Result as DbResult,
@@ -29,6 +29,7 @@ struct MemStore {
     by_id: HashMap<Uuid, (Uuid, String, String)>,
     /// vault mounts
     mounts: Vec<VaultMount>,
+    namespaces: Vec<Namespace>,
 }
 
 #[derive(Clone, Default)]
@@ -257,6 +258,37 @@ impl SecretBackend for MemBackend {
         Ok(())
     }
 
+    async fn update_secret_description(&self, secret_id: Uuid, description: String) -> DbResult<()> {
+        let mut store = self.inner.lock().unwrap();
+        let key = store.by_id.get(&secret_id).cloned().ok_or(DbError::NotFound)?;
+        let (secret, _) = store.secrets.get_mut(&key).ok_or(DbError::NotFound)?;
+        secret.description = Some(description);
+        secret.updated_at = Utc::now();
+        Ok(())
+    }
+
+    async fn restore_secret(&self, environment_id: Uuid, path: &str, name: &str) -> DbResult<SecretMeta> {
+        let mut store = self.inner.lock().unwrap();
+        let key = (environment_id, path.to_string(), name.to_string());
+        let (secret, versions) = store.secrets.get_mut(&key).ok_or(DbError::NotFound)?;
+        if secret.deleted_at.is_none() {
+            return Err(DbError::NotFound);
+        }
+        secret.deleted_at = None;
+        secret.updated_at = Utc::now();
+        let current = versions.iter().map(|v| v.version_num).max().unwrap_or(0);
+        Ok(SecretMeta {
+            id: secret.id,
+            name: secret.name.clone(),
+            path: secret.path.clone(),
+            current_version: current,
+            created_at: secret.created_at,
+            updated_at: secret.updated_at,
+            deleted_at: None,
+            tags: secret.tags.clone(),
+        })
+    }
+
     async fn set_label(&self, _secret_id: Uuid, _label: &str, _version_num: i32) -> DbResult<()> {
         Ok(())
     }
@@ -284,27 +316,35 @@ impl SecretBackend for MemBackend {
         Ok(())
     }
 
-    async fn get_vault_mount(&self, _org_id: Uuid, _mount_path: &str) -> DbResult<VaultMount> {
-        // Return NotFound so handlers fall back to default env
-        Err(DbError::NotFound)
+    async fn get_vault_mount(&self, org_id: Uuid, namespace: &str, mount_path: &str) -> DbResult<VaultMount> {
+        let store = self.inner.lock().unwrap();
+        store.mounts.iter()
+            .find(|m| m.org_id == org_id && m.namespace == namespace && m.mount_path == mount_path)
+            .cloned()
+            .ok_or(DbError::NotFound)
     }
 
-    async fn list_vault_mounts(&self, org_id: Uuid) -> DbResult<Vec<VaultMount>> {
+    async fn list_vault_mounts(&self, org_id: Uuid, namespace: &str) -> DbResult<Vec<VaultMount>> {
         let store = self.inner.lock().unwrap();
-        Ok(store.mounts.clone())
+        Ok(store.mounts.iter()
+            .filter(|m| m.org_id == org_id && m.namespace == namespace)
+            .cloned().collect())
     }
 
     async fn upsert_vault_mount(
         &self,
         org_id: Uuid,
+        namespace: &str,
         mount_path: &str,
         environment_id: Option<Uuid>,
         engine_type: &str,
     ) -> DbResult<VaultMount> {
         let mut store = self.inner.lock().unwrap();
+        store.mounts.retain(|m| !(m.org_id == org_id && m.namespace == namespace && m.mount_path == mount_path));
         let m = VaultMount {
             id: Uuid::new_v4(),
             org_id,
+            namespace: namespace.to_string(),
             mount_path: mount_path.to_string(),
             environment_id,
             engine_type: engine_type.to_string(),
@@ -313,6 +353,67 @@ impl SecretBackend for MemBackend {
         };
         store.mounts.push(m.clone());
         Ok(m)
+    }
+
+    async fn create_namespace(&self, org_id: Uuid, path: &str) -> DbResult<Namespace> {
+        let mut store = self.inner.lock().unwrap();
+        if let Some((parent, _)) = path.rsplit_once('/') {
+            if !store.namespaces.iter().any(|n| n.org_id == org_id && n.path == parent) {
+                return Err(DbError::NotFound);
+            }
+        }
+        if store.namespaces.iter().any(|n| n.org_id == org_id && n.path == path) {
+            return Err(DbError::Conflict("namespace already exists".into()));
+        }
+        let ns = Namespace { id: Uuid::new_v4(), org_id, path: path.to_string(), created_at: Utc::now() };
+        store.namespaces.push(ns.clone());
+        store.mounts.push(VaultMount {
+            id: Uuid::new_v4(),
+            org_id,
+            namespace: path.to_string(),
+            mount_path: "secret".into(),
+            environment_id: Some(Uuid::new_v4()),
+            engine_type: "kv-v2".into(),
+            config: serde_json::Value::Object(Default::default()),
+            created_at: Utc::now(),
+        });
+        Ok(ns)
+    }
+
+    async fn get_namespace(&self, org_id: Uuid, path: &str) -> DbResult<Namespace> {
+        let store = self.inner.lock().unwrap();
+        store.namespaces.iter().find(|n| n.org_id == org_id && n.path == path)
+            .cloned().ok_or(DbError::NotFound)
+    }
+
+    async fn list_namespaces(&self, org_id: Uuid) -> DbResult<Vec<Namespace>> {
+        let store = self.inner.lock().unwrap();
+        let mut v: Vec<_> = store.namespaces.iter().filter(|n| n.org_id == org_id).cloned().collect();
+        v.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(v)
+    }
+
+    async fn delete_namespace(&self, org_id: Uuid, path: &str) -> DbResult<()> {
+        let mut store = self.inner.lock().unwrap();
+        let prefix = format!("{path}/");
+        if store.namespaces.iter().any(|n| n.org_id == org_id && n.path.starts_with(&prefix)) {
+            return Err(DbError::Conflict("namespace has child namespaces".into()));
+        }
+        let env_ids: Vec<Uuid> = store.mounts.iter()
+            .filter(|m| m.org_id == org_id && m.namespace == path)
+            .filter_map(|m| m.environment_id).collect();
+        let has_secrets = store.secrets.iter()
+            .any(|((env, _, _), (s, _))| env_ids.contains(env) && s.deleted_at.is_none());
+        if has_secrets {
+            return Err(DbError::Conflict("namespace is not empty".into()));
+        }
+        let before = store.namespaces.len();
+        store.namespaces.retain(|n| !(n.org_id == org_id && n.path == path));
+        if store.namespaces.len() == before {
+            return Err(DbError::NotFound);
+        }
+        store.mounts.retain(|m| !(m.org_id == org_id && m.namespace == path));
+        Ok(())
     }
 }
 
@@ -401,7 +502,7 @@ pub fn authed_req(
         .method(method)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", "AWS4-HMAC-SHA256 Credential=test/20240101/us-east-1/secretsmanager/aws4_request")
+        .header("Authorization", "AWS4-HMAC-SHA256 Credential=test-token/20240101/us-east-1/secretsmanager/aws4_request")
         .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
         .unwrap()
 }
