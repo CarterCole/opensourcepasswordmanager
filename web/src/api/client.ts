@@ -65,6 +65,36 @@ export async function cookieLogin(token: string): Promise<void> {
   setAuthed(true)
 }
 
+export interface RedirectProvider {
+  id: string
+  display_name: string
+  url: string
+}
+
+/** External sign-in providers (e.g. "Sign in with Kith") the server has enabled. */
+export async function listRedirectProviders(): Promise<RedirectProvider[]> {
+  try {
+    const res = await fetch(`${BASE}/api/v1/auth/providers`, { credentials: 'include' })
+    if (!res.ok) return []
+    const data = await res.json()
+    return (data.providers ?? []).filter((p: { kind?: string }) => p.kind === 'redirect')
+  } catch {
+    return []
+  }
+}
+
+/** After an OIDC redirect the server has set the cookie; confirm it works. */
+export async function confirmSession(): Promise<boolean> {
+  try {
+    const res = await fetch(`${BASE}/api/v1/auth/me`, { credentials: 'include' })
+    setAuthed(res.ok)
+    return res.ok
+  } catch {
+    setAuthed(false)
+    return false
+  }
+}
+
 /** Clear the session cookie and local flag. */
 export async function cookieLogout(): Promise<void> {
   try {

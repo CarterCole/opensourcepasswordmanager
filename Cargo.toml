@@ -48,6 +48,9 @@ hmac = "0.12"
 # JWT
 jsonwebtoken = "9"
 
+# URL building (OIDC authorization requests)
+url = "2"
+
 # WebAuthn / Passkeys
 webauthn-rs = { version = "0.5" }
 openssl = { version = "0.10", features = ["vendored"] }

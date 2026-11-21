@@ -141,6 +141,12 @@ async fn main() -> Result<()> {
             tracing::info!("email+password login enabled");
             auth_mgr.register(auth::email::EmailPasswordProvider);
         }
+        // OpenID Connect providers ("Sign in with Kith"). Bad config aborts startup.
+        let oidc = Arc::new(auth::OidcService::new(cfg.auth.oidc.clone())?);
+        for p in oidc.all() {
+            tracing::info!("OIDC login enabled: {} ({})", p.config().id, p.issuer());
+            auth_mgr.register_boxed(p.clone());
+        }
         let cfg = Arc::new(cfg);
         let passkey = Arc::new(auth::PasskeyService::from_config(
             cfg.auth.rp_id.as_deref(),
@@ -156,6 +162,7 @@ async fn main() -> Result<()> {
             config: cfg,
             crypto: crypto.clone(),
             passkey,
+            oidc,
         };
         app = app.merge(api::native::native_router(native_state));
         tracing::info!("native API mounted at /api/v1/");

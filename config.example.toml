@@ -25,6 +25,14 @@ jwt_secret = "<openssl rand -base64 48>"
 # rp_id = "secretd.example.com"
 # rp_origin = "https://secretd.example.com"
 
+# "Sign in with Kith" (OpenID Connect) — set SECRETD_KITH_ISSUER and SECRETD_KITH_CLIENT_ID
+# to enable; see the README. Needs the native API (PostgreSQL).
+#   SECRETD_KITH_ISSUER=https://id.example.com
+#   SECRETD_KITH_CLIENT_ID=secretd
+#   SECRETD_RP_ORIGIN=https://secretd.example.com    (or SECRETD_KITH_REDIRECT_URI)
+#   SECRETD_KITH_CLIENT_SECRET, SECRETD_KITH_ACR_VALUES, SECRETD_KITH_SCOPES,
+#   SECRETD_KITH_AUTO_PROVISION=true
+
 [storage]
 # postgres | sqlite | redis
 backend = "postgres"

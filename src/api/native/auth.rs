@@ -210,7 +210,7 @@ async fn upsert_user(
     Ok(row.get("id"))
 }
 
-async fn fetch_roles(
+pub(super) async fn fetch_roles(
     pool: &sqlx::PgPool,
     user_id: Uuid,
     org_id: Uuid,

@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod keys;
+pub mod oidc;
 pub mod passkey;
 pub mod ratelimit;
 pub mod router;

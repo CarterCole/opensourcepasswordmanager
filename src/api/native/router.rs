@@ -11,7 +11,7 @@ use axum::{
 use serde_json::json;
 use std::sync::Arc;
 
-use super::{auth, keys, passkey, totp, users};
+use super::{auth, keys, oidc, passkey, totp, users};
 use crate::auth::{manager::AuthManager, session::SessionService};
 use crate::config::Config;
 
@@ -25,6 +25,8 @@ pub struct NativeState {
     pub crypto: Arc<crate::core::CryptoEngine>,
     /// WebAuthn/passkey service (disabled unless RP id/origin configured).
     pub passkey: Arc<crate::auth::PasskeyService>,
+    /// OpenID Connect providers ("Sign in with Kith") and logins in flight.
+    pub oidc: Arc<crate::auth::OidcService>,
 }
 
 pub fn native_router(state: NativeState) -> Router {
@@ -65,7 +67,9 @@ pub fn native_router(state: NativeState) -> Router {
         .route("/auth/login", post(auth::login))
         .route("/auth/register", post(auth::register))
         .route("/auth/passkey/login/start", post(passkey::login_start))
-        .route("/auth/passkey/login/finish", post(passkey::login_finish));
+        .route("/auth/passkey/login/finish", post(passkey::login_finish))
+        .route("/auth/oidc/:id/start", get(oidc::start))
+        .route("/auth/oidc/:id/callback", get(oidc::callback));
 
     Router::new()
         .nest("/api/v1", public.merge(authed).merge(admin))

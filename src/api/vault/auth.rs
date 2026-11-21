@@ -169,7 +169,7 @@ pub struct CookieLoginBody {
 
 /// True when the original request reached us over HTTPS (directly or via a
 /// TLS-terminating proxy that sets `X-Forwarded-Proto`).
-fn request_is_https(headers: &HeaderMap) -> bool {
+pub fn request_is_https(headers: &HeaderMap) -> bool {
     headers
         .get("X-Forwarded-Proto")
         .and_then(|v| v.to_str().ok())
@@ -177,7 +177,7 @@ fn request_is_https(headers: &HeaderMap) -> bool {
         .unwrap_or(false)
 }
 
-fn session_cookie(token: &str, max_age: u32, secure: bool) -> Option<HeaderValue> {
+pub fn session_cookie(token: &str, max_age: u32, secure: bool) -> Option<HeaderValue> {
     // HttpOnly: unreadable by JS (defeats XSS token theft).
     // SameSite=Strict: never sent on cross-site requests (CSRF defence).
     let mut c =

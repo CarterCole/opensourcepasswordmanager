@@ -35,7 +35,8 @@ pub struct AuthConfig {
     /// LDAP provider, if configured.
     pub ldap: Option<LdapConfig>,
 
-    /// OIDC providers (Okta, GitHub, Google, etc.), zero or more.
+    /// OpenID Connect providers (Kith, Okta, Google, ...), zero or more. Kith is
+    /// configured from `SECRETD_KITH_*` env vars.
     #[serde(default)]
     pub oidc: Vec<OidcConfig>,
 
@@ -69,10 +70,60 @@ pub struct OidcConfig {
     pub display_name: String,
     pub issuer: String,
     pub client_id: String,
-    pub client_secret: String,
+    /// Omit for a public client (PKCE is always used, so none is needed).
+    #[serde(default)]
+    pub client_secret: Option<String>,
     pub redirect_uri: String,
+    /// Defaults to `openid email profile`; `openid` is always added.
     #[serde(default)]
     pub scopes: Vec<String>,
+    /// Create a user on first login when none matches. Off by default: new users
+    /// are otherwise invited by an administrator. Needs a verified email.
+    #[serde(default)]
+    pub auto_provision: bool,
+    /// Sent as `acr_values` (e.g. `urn:kith:acr:aal2` to demand a strong login).
+    #[serde(default)]
+    pub acr_values: Option<String>,
+}
+
+/// Path the OIDC callback is served on; the provider's redirect URI must end in it.
+pub fn oidc_callback_path(id: &str) -> String {
+    format!("/api/v1/auth/oidc/{id}/callback")
+}
+
+/// "Sign in with Kith" (https://github.com/CarterCole/kith) from the environment.
+/// Enabled by setting `SECRETD_KITH_ISSUER`; returns `None` when it is unset.
+fn kith_from_env(rp_origin: Option<&str>) -> Result<Option<OidcConfig>> {
+    let var = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+    let Some(issuer) = var("SECRETD_KITH_ISSUER") else {
+        return Ok(None);
+    };
+    let client_id = var("SECRETD_KITH_CLIENT_ID")
+        .context("SECRETD_KITH_CLIENT_ID is required when SECRETD_KITH_ISSUER is set")?;
+    let redirect_uri = match var("SECRETD_KITH_REDIRECT_URI") {
+        Some(u) => u,
+        None => match rp_origin {
+            Some(o) => format!("{}{}", o.trim_end_matches('/'), oidc_callback_path("kith")),
+            None => bail!(
+                "set SECRETD_KITH_REDIRECT_URI (or SECRETD_RP_ORIGIN) so the Kith hub \
+                 knows where to send the user back"
+            ),
+        },
+    };
+    let flag = |k: &str| matches!(std::env::var(k).as_deref(), Ok("true") | Ok("1"));
+    Ok(Some(OidcConfig {
+        id: "kith".into(),
+        display_name: "Kith".into(),
+        issuer,
+        client_id,
+        client_secret: var("SECRETD_KITH_CLIENT_SECRET"),
+        redirect_uri,
+        scopes: var("SECRETD_KITH_SCOPES")
+            .map(|s| s.split_whitespace().map(str::to_string).collect())
+            .unwrap_or_default(),
+        auto_provision: flag("SECRETD_KITH_AUTO_PROVISION"),
+        acr_values: var("SECRETD_KITH_ACR_VALUES"),
+    }))
 }
 
 impl Config {
@@ -119,6 +170,9 @@ impl Config {
             _ => None,
         };
 
+        let rp_origin = std::env::var("SECRETD_RP_ORIGIN").ok();
+        let oidc: Vec<OidcConfig> = kith_from_env(rp_origin.as_deref())?.into_iter().collect();
+
         Ok(Self {
             listen_addr: std::env::var("SECRETD_LISTEN").unwrap_or_else(|_| "0.0.0.0:8200".into()),
             database_url: std::env::var("DATABASE_URL").context("DATABASE_URL not set")?,
@@ -129,10 +183,10 @@ impl Config {
                 email: std::env::var("SECRETD_AUTH_EMAIL")
                     .map(|v| v == "true" || v == "1")
                     .unwrap_or(false),
-                ldap: None,   // configured via TOML only (too many fields for env)
-                oidc: vec![], // configured via TOML only
+                ldap: None, // configured via TOML only (too many fields for env)
+                oidc,
                 rp_id: std::env::var("SECRETD_RP_ID").ok(),
-                rp_origin: std::env::var("SECRETD_RP_ORIGIN").ok(),
+                rp_origin,
             },
         })
     }

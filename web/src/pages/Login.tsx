@@ -1,13 +1,42 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Lock, ArrowRight, AlertCircle } from 'lucide-react'
-import { cookieLogin } from '../api/client'
+import { cookieLogin, confirmSession, listRedirectProviders, type RedirectProvider } from '../api/client'
+
+// Reasons the server gives on /login?oidc_error=… (see src/api/native/oidc.rs).
+const OIDC_ERRORS: Record<string, string> = {
+  denied: 'Sign-in was denied.',
+  no_account: 'No account here matches that identity. Ask an administrator to invite you.',
+  unverified_email: 'Your provider has not verified your email address, so it cannot be matched to an account.',
+  expired: 'That sign-in expired or was started in another browser. Try again.',
+  unavailable: 'The sign-in provider is unreachable. Try again shortly.',
+  failed: 'Sign-in failed. Try again, or use another method.',
+}
 
 export default function Login() {
   const [token, setToken] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [providers, setProviders] = useState<RedirectProvider[]>([])
+  const [params] = useSearchParams()
   const navigate = useNavigate()
+
+  useEffect(() => {
+    listRedirectProviders().then(setProviders)
+  }, [])
+
+  // Back from an external provider: either a session cookie was set, or an error code.
+  useEffect(() => {
+    const code = params.get('oidc_error')
+    if (code) {
+      setError(OIDC_ERRORS[code] ?? OIDC_ERRORS.failed)
+    } else if (params.get('oidc') === 'ok') {
+      confirmSession().then((ok) => {
+        if (ok) navigate('/secrets', { replace: true })
+        else setError(OIDC_ERRORS.failed)
+      })
+    }
+  }, [params, navigate])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -89,6 +118,23 @@ export default function Login() {
             </button>
           </form>
         </div>
+
+        {providers.length > 0 && (
+          <div className="mt-4 space-y-2">
+            <div className="text-center text-xs text-muted uppercase tracking-wider">or</div>
+            {providers.map((p) => (
+              // A full navigation, not fetch: the browser is sent to the provider.
+              <a
+                key={p.id}
+                href={p.url}
+                className="w-full flex items-center justify-center gap-2 bg-surface hover:bg-bg border border-border text-txt rounded-lg px-4 py-2.5 text-sm font-medium transition-colors"
+              >
+                Sign in with {p.display_name}
+                <ArrowRight size={15} />
+              </a>
+            ))}
+          </div>
+        )}
 
         <p className="text-xs text-muted text-center mt-6">
           secretd v0.1 — open source password manager
