@@ -445,7 +445,7 @@ impl SecretBackend for PostgresBackend {
         .bind(secret_id)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.iter().map(|r| Self::row_to_version(r)).collect())
+        Ok(rows.iter().map(Self::row_to_version).collect())
     }
 
     async fn write_audit(
@@ -505,7 +505,7 @@ impl SecretBackend for PostgresBackend {
         )
         .bind(org_id).bind(namespace)
         .fetch_all(&self.pool).await?;
-        Ok(rows.iter().map(|r| Self::row_to_mount(r)).collect())
+        Ok(rows.iter().map(Self::row_to_mount).collect())
     }
 
     async fn upsert_vault_mount(

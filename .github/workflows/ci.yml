@@ -12,8 +12,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned to match the Dockerfile; sqlx 0.7.4 does not compile on newer stable.
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.90.0
         with:
           components: rustfmt, clippy
 

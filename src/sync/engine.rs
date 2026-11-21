@@ -73,6 +73,7 @@ pub struct RemoteSecret {
 
 pub struct SyncEngine {
     store: Arc<SecretStore>,
+    #[allow(dead_code)]
     db: Arc<dyn SecretBackend>,
     client: reqwest::Client,
 }

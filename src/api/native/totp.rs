@@ -18,6 +18,7 @@ pub struct CodeBody {
     pub code: String,
 }
 
+#[allow(clippy::result_large_err)]
 fn user_id(claims: &Claims) -> Result<Uuid, axum::response::Response> {
     Uuid::parse_str(&claims.sub).map_err(|_| {
         (

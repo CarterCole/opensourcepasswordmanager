@@ -34,7 +34,7 @@ impl AwsProvider {
     pub async fn list_secrets(&self) -> anyhow::Result<Vec<RemoteSecret>> {
         let resp: serde_json::Value = self
             .client
-            .post(&self.endpoint())
+            .post(self.endpoint())
             .header("X-Amz-Target", "secretsmanager.ListSecrets")
             .header("Content-Type", "application/x-amz-json-1.1")
             .header("Authorization", self.auth_header())
@@ -77,7 +77,7 @@ impl AwsProvider {
     pub async fn get_secret(&self, name: &str) -> anyhow::Result<String> {
         let resp: serde_json::Value = self
             .client
-            .post(&self.endpoint())
+            .post(self.endpoint())
             .header("X-Amz-Target", "secretsmanager.GetSecretValue")
             .header("Content-Type", "application/x-amz-json-1.1")
             .header("Authorization", self.auth_header())
@@ -98,7 +98,7 @@ impl AwsProvider {
         // Try PutSecretValue first; if 404 fall back to CreateSecret
         let resp = self
             .client
-            .post(&self.endpoint())
+            .post(self.endpoint())
             .header("X-Amz-Target", "secretsmanager.PutSecretValue")
             .header("Content-Type", "application/x-amz-json-1.1")
             .header("Authorization", self.auth_header())
@@ -108,7 +108,7 @@ impl AwsProvider {
 
         if resp.status().as_u16() == 404 {
             self.client
-                .post(&self.endpoint())
+                .post(self.endpoint())
                 .header("X-Amz-Target", "secretsmanager.CreateSecret")
                 .header("Content-Type", "application/x-amz-json-1.1")
                 .header("Authorization", self.auth_header())
@@ -122,7 +122,7 @@ impl AwsProvider {
 
     pub async fn delete_secret(&self, name: &str) -> anyhow::Result<()> {
         self.client
-            .post(&self.endpoint())
+            .post(self.endpoint())
             .header("X-Amz-Target", "secretsmanager.DeleteSecret")
             .header("Content-Type", "application/x-amz-json-1.1")
             .header("Authorization", self.auth_header())

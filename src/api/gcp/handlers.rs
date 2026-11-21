@@ -45,7 +45,7 @@ pub async fn list_secrets(
     Path(project): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(_) = require_auth(&state, &headers).await {
+    if require_auth(&state, &headers).await.is_err() {
         return gcp_error(403, "Not authorized", "PERMISSION_DENIED");
     }
 
@@ -81,7 +81,7 @@ pub async fn create_secret(
     Query(q): Query<CreateSecretQuery>,
     Json(_body): Json<Value>,
 ) -> Response {
-    if let Err(_) = require_auth(&state, &headers).await {
+    if require_auth(&state, &headers).await.is_err() {
         return gcp_error(403, "Not authorized", "PERMISSION_DENIED");
     }
 
@@ -125,7 +125,7 @@ pub async fn post_action(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    if let Err(_) = require_auth(&state, &headers).await {
+    if require_auth(&state, &headers).await.is_err() {
         return gcp_error(403, "Not authorized", "PERMISSION_DENIED");
     }
 
@@ -181,7 +181,7 @@ pub async fn get_action(
     Path((project, action)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(_) = require_auth(&state, &headers).await {
+    if require_auth(&state, &headers).await.is_err() {
         return gcp_error(403, "Not authorized", "PERMISSION_DENIED");
     }
 
@@ -244,7 +244,7 @@ pub async fn delete_action(
     Path((_project, action)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(_) = require_auth(&state, &headers).await {
+    if require_auth(&state, &headers).await.is_err() {
         return gcp_error(403, "Not authorized", "PERMISSION_DENIED");
     }
 

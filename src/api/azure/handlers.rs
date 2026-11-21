@@ -6,7 +6,6 @@ use axum::{
     Json,
 };
 use serde_json::{json, Value};
-use uuid::Uuid;
 
 use crate::api::common::{require_auth, AppState};
 

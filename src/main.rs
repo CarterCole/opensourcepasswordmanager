@@ -1,10 +1,4 @@
-mod api;
-mod auth;
-mod config;
-mod core;
-mod db;
-mod sync;
-mod ui;
+use opensourcepasswordmanager::{api, auth, config, core, db, ui};
 
 use anyhow::{Context, Result};
 use axum::Router;
@@ -33,6 +27,7 @@ async fn main() -> Result<()> {
     //   postgres://...       →  PostgreSQL (production)
 
     enum Pools {
+        #[allow(dead_code)] // held to keep the pool alive for the process lifetime
         Sqlite(sqlx::SqlitePool),
         Postgres(sqlx::PgPool),
     }

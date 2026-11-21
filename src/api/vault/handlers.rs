@@ -100,6 +100,7 @@ fn ns_json(ns: &crate::db::Namespace) -> Value {
 }
 
 /// Validate a namespace path relative to the request namespace; returns the absolute path.
+#[allow(clippy::result_large_err)]
 fn abs_ns_path(claims: &VaultClaims, rel: &str) -> Result<String, Response> {
     let rel = crate::api::vault::auth::normalize_ns(rel);
     if rel.is_empty() {
@@ -365,7 +366,6 @@ pub async fn kv_read(
         }
     };
 
-    let deleted = sv.version.deleted_at.is_some();
     let destroyed = sv.version.destroyed_at.is_some();
 
     Json(VaultResponse::kv(KvData {

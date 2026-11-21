@@ -38,6 +38,7 @@ pub trait SecretBackend: Send + Sync {
 
     // ── Audit ────────────────────────────────────────────────────────────────
 
+    #[allow(clippy::too_many_arguments)]
     async fn write_audit(
         &self,
         org_id: Option<Uuid>,

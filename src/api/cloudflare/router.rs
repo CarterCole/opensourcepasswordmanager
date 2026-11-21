@@ -1,9 +1,6 @@
 use super::handlers;
 use crate::api::common::AppState;
-use axum::{
-    routing::{delete, get, patch, post},
-    Router,
-};
+use axum::{routing::get, Router};
 
 pub fn cf_router(state: AppState) -> Router {
     Router::new()

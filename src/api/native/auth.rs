@@ -6,7 +6,6 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use crate::api::native::router::NativeState;
-use crate::auth::ApiKeyService;
 
 // ── GET /api/v1/auth/providers ─────────────────────────────────────────────
 

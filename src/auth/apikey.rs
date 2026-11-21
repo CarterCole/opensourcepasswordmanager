@@ -1,13 +1,12 @@
 //! API key generation and validation.
 //! Keys are formatted as `sk_live_{random_base64}` and stored as Argon2 hashes.
-use anyhow::{Context, Result};
+use anyhow::Result;
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine};
 use rand::RngCore;
-use uuid::Uuid;
 
 pub struct ApiKeyService;
 

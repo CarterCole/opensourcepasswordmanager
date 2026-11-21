@@ -1,7 +1,7 @@
 use super::handlers;
 use crate::api::common::AppState;
 use axum::{
-    routing::{delete, get, post, put},
+    routing::{get, post},
     Router,
 };
 

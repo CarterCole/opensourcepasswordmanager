@@ -5,11 +5,15 @@ use chrono::{DateTime, Utc};
 use sqlx::{Pool, Row, Sqlite};
 use uuid::Uuid;
 
+type EncryptFn = std::sync::Arc<dyn Fn(&[u8]) -> anyhow::Result<EncryptResult> + Send + Sync>;
+type DecryptFn =
+    std::sync::Arc<dyn Fn(&[u8], &[u8], &[u8]) -> anyhow::Result<Vec<u8>> + Send + Sync>;
+
 #[derive(Clone)]
 pub struct SqliteBackend {
     pool: Pool<Sqlite>,
-    encrypt: std::sync::Arc<dyn Fn(&[u8]) -> anyhow::Result<EncryptResult> + Send + Sync>,
-    decrypt: std::sync::Arc<dyn Fn(&[u8], &[u8], &[u8]) -> anyhow::Result<Vec<u8>> + Send + Sync>,
+    encrypt: EncryptFn,
+    decrypt: DecryptFn,
 }
 
 impl SqliteBackend {
